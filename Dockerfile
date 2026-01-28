@@ -1,10 +1,13 @@
 FROM python:3.13-slim
 
 # Install LaTeX and clean up in one layer to reduce image size
+# Updated LaTeX installation layer
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     texlive-latex-base \
-    texlive-latex-extra && \
+    texlive-latex-extra \
+    texlive-lang-german \
+    texlive-fonts-recommended && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
