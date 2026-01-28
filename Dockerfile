@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 # Install LaTeX and clean up in one layer to reduce image size
 RUN apt-get update && \
@@ -16,7 +16,7 @@ COPY pyproject.toml poetry.lock ./
 # Install poetry and dependencies
 RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.create false && \
-    poetry install --no-dev --no-interaction --no-ansi
+    poetry install --only main --no-interaction --no-ansi
 
 # Copy application code (excluding template.tex - that goes in a volume)
 COPY src/latex_email_daemon/*.py ./src/latex_email_daemon/
