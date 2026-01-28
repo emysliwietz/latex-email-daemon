@@ -20,7 +20,6 @@ RUN pip install --no-cache-dir poetry && \
 
 # Copy application code (excluding template.tex - that goes in a volume)
 COPY src/latex_email_daemon/*.py ./src/latex_email_daemon/
-COPY src/latex_email_daemon/__init__.py ./src/latex_email_daemon/
 
 # Create necessary directories
 RUN mkdir -p src/latex_email_daemon/emails src/latex_email_daemon/pdfs src/latex_email_daemon/data src/latex_email_daemon/templates
