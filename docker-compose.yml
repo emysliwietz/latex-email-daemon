@@ -1,0 +1,26 @@
+services:
+    latex-email-daemon:
+        image: ghcr.io/YOUR_GITHUB_USERNAME/latex-email-daemon:latest
+        container_name: latex-email-daemon
+        restart: unless-stopped
+        environment:
+            - IMAP_SERVER=${IMAP_SERVER}
+            - EMAIL_ACCOUNT=${EMAIL_ACCOUNT}
+            - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+            - TARGET_ADDRESS=${TARGET_ADDRESS}
+            - ALLOWED_SENDER_DOMAIN=${ALLOWED_SENDER_DOMAIN}
+            - SMTP_SERVER=${SMTP_SERVER}
+            - SMTP_PORT=${SMTP_PORT}
+            - SMTP_SENDER_EMAIL=${SMTP_SENDER_EMAIL}
+            - SMTP_SENDER_PASSWORD=${SMTP_SENDER_PASSWORD}
+            - IDLE_TIMEOUT=${IDLE_TIMEOUT:-300}
+            - EMAIL_BODY_TEXT=${EMAIL_BODY_TEXT}
+            - STATE_FILE=data/last_seen_uid.txt
+            - LATEX_TEMPLATE_FILE=templates/template.tex
+        volumes:
+            - daemon-data:/app/src/latex_email_daemon/data
+            - template-data:/app/src/latex_email_daemon/templates
+
+volumes:
+    daemon-data:
+    template-data:
