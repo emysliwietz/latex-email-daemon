@@ -6,6 +6,7 @@ import smtplib
 import re
 from email.message import EmailMessage
 from dotenv import load_dotenv
+from bs4 import BeautifulSoup, NavigableString
 
 # ---- Load environment variables ----
 load_dotenv()
@@ -47,10 +48,68 @@ def latex_escape(text: str) -> str:
         return ""
     return LATEX_ESCAPE_PATTERN.sub(lambda m: LATEX_REPLACEMENTS[m.group()], text)
 
-# ---- Paragraph splitting ----
+# ---- HTML to LaTeX conversion ----
+def html_to_latex(html_content: str) -> str:
+    """
+    Convert HTML content to LaTeX, preserving formatting.
+    Handles: bold, italic, underline, links, lists, line breaks.
+    """
+    soup = BeautifulSoup(html_content, 'html.parser')
+
+    def process_element(element):
+        """Recursively process HTML elements and convert to LaTeX."""
+        if isinstance(element, NavigableString):
+            # Text node - escape LaTeX special chars
+            return latex_escape(str(element))
+
+        tag = element.name
+
+        # Process children
+        children_latex = ''.join(process_element(child) for child in element.children)
+
+        # Convert based on tag type
+        if tag in ['strong', 'b']:
+            return f'\\textbf{{{children_latex}}}'
+        elif tag in ['em', 'i']:
+            return f'\\textit{{{children_latex}}}'
+        elif tag == 'u':
+            return f'\\uline{{{children_latex}}}'
+        elif tag == 'a':
+            href = element.get('href', '')
+            return f'\\href{{{latex_escape(href)}}}{{{children_latex}}}'
+        elif tag == 'br':
+            return '\\\\'
+        elif tag == 'ul':
+            # Process list items
+            items = []
+            for li in element.find_all('li', recursive=False):
+                item_content = ''.join(process_element(child) for child in li.children)
+                items.append(f'\\item {item_content}')
+            return '\\begin{itemize}\n' + '\n'.join(items) + '\n\\end{itemize}'
+        elif tag == 'ol':
+            # Process list items
+            items = []
+            for li in element.find_all('li', recursive=False):
+                item_content = ''.join(process_element(child) for child in li.children)
+                items.append(f'\\item {item_content}')
+            return '\\begin{enumerate}\n' + '\n'.join(items) + '\n\\end{enumerate}'
+        elif tag == 'p':
+            # Paragraph - add double newline for separation
+            return children_latex + '\n\n'
+        elif tag == 'li':
+            # List items are handled by ul/ol, just return content
+            return children_latex
+        else:
+            # Unknown tag - just return the processed children content
+            return children_latex
+
+    result = process_element(soup)
+    return result.strip()
+
+# ---- Paragraph splitting (for plain text) ----
 def split_paragraphs(text: str):
     """
-    Split text into first, second, and rest paragraphs with LaTeX escaping.
+    Split text into first, second, third, and rest paragraphs with LaTeX escaping.
 
     Robustly handles:
     - Multiple consecutive empty lines (treated as single paragraph break)
@@ -59,7 +118,7 @@ def split_paragraphs(text: str):
     - Leading/trailing empty lines (ignored)
     """
     if not text or not text.strip():
-        return "", "", ""
+        return "", "", "", ""
 
     lines = text.splitlines()
     paragraphs = []
@@ -83,18 +142,47 @@ def split_paragraphs(text: str):
 
     # Handle case where we have no paragraphs at all
     if not paragraphs:
-        return "", "", ""
+        return "", "", "", ""
 
     first = paragraphs[0] if len(paragraphs) > 0 else ""
     second = paragraphs[1] if len(paragraphs) > 1 else ""
-    rest = "\n\n".join(paragraphs[2:]) if len(paragraphs) > 2 else ""
+    third = paragraphs[2] if len(paragraphs) > 2 else ""
+    rest = "\n\n".join(paragraphs[3:]) if len(paragraphs) > 3 else ""
 
-    # Escape for LaTeX, then replace newlines with LaTeX line breaks in first two paragraphs
+    # Escape for LaTeX, then replace newlines with LaTeX line breaks in first three paragraphs
     first = latex_escape(first).replace("\n", r"\\")
     second = latex_escape(second).replace("\n", r"\\")
+    third = latex_escape(third).replace("\n", r"\\")
     rest = latex_escape(rest)
 
-    return first, second, rest
+    return first, second, third, rest
+
+# ---- Paragraph splitting (for HTML/LaTeX that's already processed) ----
+def split_latex_paragraphs(latex_text: str):
+    """
+    Split already-converted LaTeX text into first, second, third, and rest paragraphs.
+    Does NOT escape since the text is already in LaTeX format.
+    """
+    if not latex_text or not latex_text.strip():
+        return "", "", "", ""
+
+    # Split on double newlines (paragraph breaks)
+    paragraphs = [p.strip() for p in latex_text.split('\n\n') if p.strip()]
+
+    if not paragraphs:
+        return "", "", "", ""
+
+    first = paragraphs[0] if len(paragraphs) > 0 else ""
+    second = paragraphs[1] if len(paragraphs) > 1 else ""
+    third = paragraphs[2] if len(paragraphs) > 2 else ""
+    rest = "\n\n".join(paragraphs[3:]) if len(paragraphs) > 3 else ""
+
+    # Replace single newlines with LaTeX line breaks in first three paragraphs
+    first = first.replace("\n", r"\\")
+    second = second.replace("\n", r"\\")
+    third = third.replace("\n", r"\\")
+
+    return first, second, third, rest
 
 # ---- Load email JSON ----
 if len(sys.argv) < 2:
@@ -113,13 +201,22 @@ except (FileNotFoundError, json.JSONDecodeError) as e:
 subject_raw = data.get("subject", "No Subject")
 subject_safe = re.sub(r'[^\w\d-]+', '_', subject_raw)[:50]
 
-# Prefer text, fallback to html
-raw_body = data.get("text") or data.get("html") or ""
+# Prefer HTML over text to preserve formatting
+raw_body = data.get("html") or data.get("text") or ""
 raw_body = raw_body.strip()
 if not raw_body:
     raw_body = "No body content"
 
-first_paragraph, second_paragraph, rest_body = split_paragraphs(raw_body)
+# Determine if we're processing HTML or plain text
+is_html = bool(data.get("html"))
+
+if is_html:
+    # Convert HTML to LaTeX
+    latex_body = html_to_latex(raw_body)
+    first_paragraph, second_paragraph, third_paragraph, rest_body = split_latex_paragraphs(latex_body)
+else:
+    # Plain text - use original logic with escaping
+    first_paragraph, second_paragraph, third_paragraph, rest_body = split_paragraphs(raw_body)
 
 from_email = [email for _, email in data.get("from", [])]
 cc_emails = [email for _, email in data.get("cc", [])] if data.get("cc") else []
@@ -139,7 +236,7 @@ except FileNotFoundError:
     sys.exit(1)
 
 # Validate template has required placeholders
-required_placeholders = ["{{SUBJECT}}", "{{FIRST_PARAGRAPH}}", "{{SECOND_PARAGRAPH}}", "{{BODY}}"]
+required_placeholders = ["{{SUBJECT}}", "{{FIRST_PARAGRAPH}}", "{{SECOND_PARAGRAPH}}", "{{THIRD_PARAGRAPH}}", "{{BODY}}"]
 missing = [p for p in required_placeholders if p not in latex_template]
 if missing:
     print(f"⚠️ Template missing placeholders: {missing}")
@@ -149,6 +246,7 @@ latex_content = latex_template \
     .replace("{{SUBJECT}}", latex_escape(subject_raw)) \
     .replace("{{FIRST_PARAGRAPH}}", first_paragraph) \
     .replace("{{SECOND_PARAGRAPH}}", second_paragraph) \
+    .replace("{{THIRD_PARAGRAPH}}", third_paragraph) \
     .replace("{{BODY}}", rest_body)
 
 # ---- Determine unique filenames ----
