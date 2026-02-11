@@ -7,7 +7,7 @@ RUN apt-get update && \
     texlive-latex-base \
     texlive-latex-extra \
     texlive-lang-german \
-    texlive-generic-recommended \
+    texlive-plain-generic \
     texlive-fonts-recommended && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
