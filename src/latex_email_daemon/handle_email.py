@@ -48,6 +48,34 @@ def latex_escape(text: str) -> str:
         return ""
     return LATEX_ESCAPE_PATTERN.sub(lambda m: LATEX_REPLACEMENTS[m.group()], text)
 
+# ---- Filename sanitization ----
+def sanitize_filename(text: str, max_length: int = 50) -> str:
+    """
+    Convert text to a safe ASCII-only filename.
+    Handles German umlauts and removes all non-ASCII characters.
+    """
+    # German umlaut replacements
+    replacements = {
+        'ä': 'ae', 'ö': 'oe', 'ü': 'ue',
+        'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue',
+        'ß': 'ss'
+    }
+
+    # Replace umlauts
+    for umlaut, replacement in replacements.items():
+        text = text.replace(umlaut, replacement)
+
+    # Remove or replace any remaining non-ASCII characters
+    text = text.encode('ascii', 'ignore').decode('ascii')
+
+    # Replace unsafe filename characters with underscore (only allow a-z, A-Z, 0-9, dash, underscore)
+    text = re.sub(r'[^a-zA-Z0-9_-]+', '_', text)
+
+    # Remove leading/trailing underscores and truncate
+    text = text.strip('_')[:max_length]
+
+    return text if text else "email"  # Fallback if everything gets stripped
+
 # ---- HTML to LaTeX conversion ----
 def html_to_latex(html_content: str) -> str:
     """
@@ -150,9 +178,10 @@ def split_paragraphs(text: str):
     rest = "\n\n".join(paragraphs[3:]) if len(paragraphs) > 3 else ""
 
     # Escape for LaTeX, then replace newlines with LaTeX line breaks in first three paragraphs
-    first = latex_escape(first).replace("\n", r"\\")
-    second = latex_escape(second).replace("\n", r"\\")
-    third = latex_escape(third).replace("\n", r"\\")
+    # BUT: only add line breaks if the content is not empty
+    first = latex_escape(first).replace("\n", r"\\") if first else ""
+    second = latex_escape(second).replace("\n", r"\\") if second else ""
+    third = latex_escape(third).replace("\n", r"\\") if third else ""
     rest = latex_escape(rest)
 
     return first, second, third, rest
@@ -178,9 +207,10 @@ def split_latex_paragraphs(latex_text: str):
     rest = "\n\n".join(paragraphs[3:]) if len(paragraphs) > 3 else ""
 
     # Replace single newlines with LaTeX line breaks in first three paragraphs
-    first = first.replace("\n", r"\\")
-    second = second.replace("\n", r"\\")
-    third = third.replace("\n", r"\\")
+    # BUT: only add line breaks if the content is not empty
+    first = first.replace("\n", r"\\") if first else ""
+    second = second.replace("\n", r"\\") if second else ""
+    third = third.replace("\n", r"\\") if third else ""
 
     return first, second, third, rest
 
@@ -199,7 +229,7 @@ except (FileNotFoundError, json.JSONDecodeError) as e:
     sys.exit(1)
 
 subject_raw = data.get("subject", "No Subject")
-subject_safe = re.sub(r'[^\w\d-]+', '_', subject_raw)[:50]
+subject_safe = sanitize_filename(subject_raw)
 
 # Prefer HTML over text to preserve formatting
 raw_body = data.get("html") or data.get("text") or ""
@@ -274,24 +304,63 @@ except IOError as e:
 try:
     result = subprocess.run(
         ["pdflatex", "-interaction=nonstopmode", "-output-directory", PDF_DIR, tex_file],
-        check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=30  # Add timeout to prevent hanging
+        timeout=30,
+        check=False  # Don't raise exception, we'll check manually
     )
+
+    # pdflatex often returns 0 even with errors when using -interaction=nonstopmode
+    # So we check if the PDF was actually created
+    if not os.path.exists(pdf_file):
+        print("⚠️ Failed to compile PDF - no output file created")
+        print(f"\n--- pdflatex STDOUT ---")
+        stdout_text = result.stdout.decode('utf-8', errors='replace')
+        print(stdout_text)
+
+        if result.stderr:
+            print(f"\n--- pdflatex STDERR ---")
+            print(result.stderr.decode('utf-8', errors='replace'))
+
+        # Try to show the .log file for more details
+        log_file = tex_file.replace('.tex', '.log')
+        if os.path.exists(log_file):
+            print(f"\n--- Last 50 lines of {log_file} ---")
+            try:
+                with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                    lines = f.readlines()
+                    print(''.join(lines[-50:]))
+            except Exception as e:
+                print(f"Could not read log file: {e}")
+
+        sys.exit(1)
+
+    # Check for LaTeX errors even if PDF was created
+    stdout_text = result.stdout.decode('utf-8', errors='replace')
+    if '! LaTeX Error:' in stdout_text or '! Emergency stop' in stdout_text:
+        print(f"⚠️ Warning: PDF created but LaTeX reported errors")
+        print(f"\n--- Errors from pdflatex ---")
+        # Extract error lines
+        for line in stdout_text.split('\n'):
+            if line.startswith('!') or 'Error' in line or 'Warning' in line:
+                print(line)
+        print()
+
     print(f"✅ PDF generated: {pdf_file}")
+
 except subprocess.TimeoutExpired:
     print("⚠️ PDF compilation timed out")
-    sys.exit(1)
-except subprocess.CalledProcessError as e:
-    print("⚠️ Failed to compile PDF")
-    print(f"Error output: {e.stderr.decode('utf-8', errors='replace')[:500]}")
     sys.exit(1)
 except FileNotFoundError:
     print("⚠️ pdflatex not found. Is LaTeX installed?")
     sys.exit(1)
+except Exception as e:
+    print(f"⚠️ Unexpected error during PDF compilation: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 
-# Verify PDF was created
+# Verify PDF was created (double-check)
 if not os.path.exists(pdf_file):
     print(f"⚠️ PDF file was not created: {pdf_file}")
     sys.exit(1)
@@ -333,7 +402,7 @@ try:
         print(f"🗑 Deleted JSON file: {json_file}")
 
     # Clean up LaTeX auxiliary files and the PDF
-    for ext in [".aux", ".log", ".tex", ".pdf"]:
+    for ext in [".aux", ".log", ".tex", ".pdf", ".out"]:
         f = tex_file.replace(".tex", ext)
         if os.path.exists(f):
             try:

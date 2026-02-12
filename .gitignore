@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Emacs
+.auctex-auto/
+
 # Sensitive files
 src/latex_email_daemon/template.tex
 
