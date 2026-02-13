@@ -17,7 +17,10 @@ SENDER_EMAIL = os.getenv("SMTP_SENDER_EMAIL")
 SENDER_PASSWORD = os.getenv("SMTP_SENDER_PASSWORD")
 PDF_DIR = os.getenv("PDF_DIR", "pdfs")
 LATEX_TEMPLATE_FILE = os.getenv("LATEX_TEMPLATE_FILE", "template.tex")
-EMAIL_BODY_TEXT = os.getenv("EMAIL_BODY_TEXT", "Im Anhang befindet sich die gewünschte PDF.\n\nDies ist eine automatisch generierte Email. Beep. Boop.")
+EMAIL_BODY_TEXT = os.getenv(
+    "EMAIL_BODY_TEXT",
+    "Im Anhang befindet sich die gewünschte PDF.\n\nDies ist eine automatisch generierte Email. Beep. Boop.",
+)
 
 # ---- Sanity check ----
 if not SENDER_EMAIL or not SENDER_PASSWORD:
@@ -28,25 +31,27 @@ os.makedirs(PDF_DIR, exist_ok=True)
 
 # ---- LaTeX escaping ----
 # Compile regex pattern once for performance
-LATEX_ESCAPE_PATTERN = re.compile(r'[\\%$#_{}~^&]')
+LATEX_ESCAPE_PATTERN = re.compile(r"[\\%$#_{}~^&]")
 LATEX_REPLACEMENTS = {
-    '\\': r'\textbackslash{}',
-    '%': r'\%',
-    '$': r'\$',
-    '#': r'\#',
-    '_': r'\_',
-    '{': r'\{',
-    '}': r'\}',
-    '~': r'\textasciitilde{}',
-    '^': r'\^{}',
-    '&': r'\&',
+    "\\": r"\textbackslash{}",
+    "%": r"\%",
+    "$": r"\$",
+    "#": r"\#",
+    "_": r"\_",
+    "{": r"\{",
+    "}": r"\}",
+    "~": r"\textasciitilde{}",
+    "^": r"\^{}",
+    "&": r"\&",
 }
+
 
 def latex_escape(text: str) -> str:
     """Escape special LaTeX characters in text."""
     if not text:
         return ""
     return LATEX_ESCAPE_PATTERN.sub(lambda m: LATEX_REPLACEMENTS[m.group()], text)
+
 
 # ---- Filename sanitization ----
 def sanitize_filename(text: str, max_length: int = 50) -> str:
@@ -56,9 +61,13 @@ def sanitize_filename(text: str, max_length: int = 50) -> str:
     """
     # German umlaut replacements
     replacements = {
-        'ä': 'ae', 'ö': 'oe', 'ü': 'ue',
-        'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue',
-        'ß': 'ss'
+        "ä": "ae",
+        "ö": "oe",
+        "ü": "ue",
+        "Ä": "Ae",
+        "Ö": "Oe",
+        "Ü": "Ue",
+        "ß": "ss",
     }
 
     # Replace umlauts
@@ -66,65 +75,82 @@ def sanitize_filename(text: str, max_length: int = 50) -> str:
         text = text.replace(umlaut, replacement)
 
     # Remove or replace any remaining non-ASCII characters
-    text = text.encode('ascii', 'ignore').decode('ascii')
+    text = text.encode("ascii", "ignore").decode("ascii")
 
     # Replace unsafe filename characters with underscore (only allow a-z, A-Z, 0-9, dash, underscore)
-    text = re.sub(r'[^a-zA-Z0-9_-]+', '_', text)
+    text = re.sub(r"[^a-zA-Z0-9_-]+", "_", text)
 
     # Remove leading/trailing underscores and truncate
-    text = text.strip('_')[:max_length]
+    text = text.strip("_")[:max_length]
 
     return text if text else "email"  # Fallback if everything gets stripped
+
 
 # ---- HTML to LaTeX conversion ----
 def html_to_latex(html_content: str) -> str:
     """
     Convert HTML content to LaTeX, preserving formatting.
-    Handles: bold, italic, underline, links, lists, line breaks.
+    Handles: bold, italic, underline, links, lists, line breaks, divs.
     """
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, "html.parser")
 
-    def process_element(element):
+    def process_element(element, parent_tag=None):
         """Recursively process HTML elements and convert to LaTeX."""
         if isinstance(element, NavigableString):
             # Text node - escape LaTeX special chars
-            return latex_escape(str(element))
+            text = str(element).strip()
+            return latex_escape(text) if text else ""
 
         tag = element.name
 
         # Process children
-        children_latex = ''.join(process_element(child) for child in element.children)
+        children_latex = "".join(
+            process_element(child, tag) for child in element.children
+        )
 
         # Convert based on tag type
-        if tag in ['strong', 'b']:
-            return f'\\textbf{{{children_latex}}}'
-        elif tag in ['em', 'i']:
-            return f'\\textit{{{children_latex}}}'
-        elif tag == 'u':
-            return f'\\uline{{{children_latex}}}'
-        elif tag == 'a':
-            href = element.get('href', '')
-            return f'\\href{{{latex_escape(href)}}}{{{children_latex}}}'
-        elif tag == 'br':
-            return '\\\\'
-        elif tag == 'ul':
+        if tag in ["strong", "b"]:
+            return f"\\textbf{{{children_latex}}}"
+        elif tag in ["em", "i"]:
+            return f"\\textit{{{children_latex}}}"
+        elif tag == "u":
+            return f"\\uline{{{children_latex}}}"
+        elif tag == "a":
+            href = element.get("href", "")
+            return f"\\href{{{latex_escape(href)}}}{{{children_latex}}}"
+        elif tag == "br":
+            return "\\\\"
+        elif tag == "ul":
             # Process list items
             items = []
-            for li in element.find_all('li', recursive=False):
-                item_content = ''.join(process_element(child) for child in li.children)
-                items.append(f'\\item {item_content}')
-            return '\\begin{itemize}\n' + '\n'.join(items) + '\n\\end{itemize}'
-        elif tag == 'ol':
+            for li in element.find_all("li", recursive=False):
+                item_content = "".join(
+                    process_element(child, "ul") for child in li.children
+                )
+                items.append(f"\\item {item_content}")
+            return "\\begin{itemize}\n" + "\n".join(items) + "\n\\end{itemize}"
+        elif tag == "ol":
             # Process list items
             items = []
-            for li in element.find_all('li', recursive=False):
-                item_content = ''.join(process_element(child) for child in li.children)
-                items.append(f'\\item {item_content}')
-            return '\\begin{enumerate}\n' + '\n'.join(items) + '\n\\end{enumerate}'
-        elif tag == 'p':
+            for li in element.find_all("li", recursive=False):
+                item_content = "".join(
+                    process_element(child, "ol") for child in li.children
+                )
+                items.append(f"\\item {item_content}")
+            return "\\begin{enumerate}\n" + "\n".join(items) + "\n\\end{enumerate}"
+        elif tag == "p":
             # Paragraph - add double newline for separation
-            return children_latex + '\n\n'
-        elif tag == 'li':
+            return children_latex + "\n\n" if children_latex.strip() else ""
+        elif tag == "div":
+            # Div tags often indicate paragraph structure in Gmail
+            # Check if it's just an empty line break div
+            if children_latex.strip() in ["", "\\\\"]:
+                # Empty div or just a <br> - treat as paragraph separator
+                return "\n\n"
+            else:
+                # Div with content - treat as paragraph
+                return children_latex + "\n\n" if children_latex.strip() else ""
+        elif tag == "li":
             # List items are handled by ul/ol, just return content
             return children_latex
         else:
@@ -132,7 +158,20 @@ def html_to_latex(html_content: str) -> str:
             return children_latex
 
     result = process_element(soup)
+
+    # Post-processing fixes for common Gmail HTML patterns
+    # Pattern: \\<newlines>\\CONTENT should be treated as paragraph break
+    # This handles <br><div><br>CONTENT which gets converted to \\\\CONTENT
+    # Replace double line breaks (\\\\) with paragraph separator when appropriate
+    result = re.sub(
+        r"\\\\(\\\\)+", r"\n\n", result
+    )  # 2+ line breaks -> paragraph break
+
+    # Clean up: remove excessive newlines (more than 2 in a row)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+
     return result.strip()
+
 
 # ---- Paragraph splitting (for plain text) ----
 def split_paragraphs(text: str):
@@ -186,6 +225,7 @@ def split_paragraphs(text: str):
 
     return first, second, third, rest
 
+
 # ---- Paragraph splitting (for HTML/LaTeX that's already processed) ----
 def split_latex_paragraphs(latex_text: str):
     """
@@ -196,7 +236,7 @@ def split_latex_paragraphs(latex_text: str):
         return "", "", "", ""
 
     # Split on double newlines (paragraph breaks)
-    paragraphs = [p.strip() for p in latex_text.split('\n\n') if p.strip()]
+    paragraphs = [p.strip() for p in latex_text.split("\n\n") if p.strip()]
 
     if not paragraphs:
         return "", "", "", ""
@@ -213,6 +253,7 @@ def split_latex_paragraphs(latex_text: str):
     third = third.replace("\n", r"\\") if third else ""
 
     return first, second, third, rest
+
 
 # ---- Load email JSON ----
 if len(sys.argv) < 2:
@@ -243,10 +284,14 @@ is_html = bool(data.get("html"))
 if is_html:
     # Convert HTML to LaTeX
     latex_body = html_to_latex(raw_body)
-    first_paragraph, second_paragraph, third_paragraph, rest_body = split_latex_paragraphs(latex_body)
+    first_paragraph, second_paragraph, third_paragraph, rest_body = (
+        split_latex_paragraphs(latex_body)
+    )
 else:
     # Plain text - use original logic with escaping
-    first_paragraph, second_paragraph, third_paragraph, rest_body = split_paragraphs(raw_body)
+    first_paragraph, second_paragraph, third_paragraph, rest_body = split_paragraphs(
+        raw_body
+    )
 
 from_email = [email for _, email in data.get("from", [])]
 cc_emails = [email for _, email in data.get("cc", [])] if data.get("cc") else []
@@ -266,18 +311,26 @@ except FileNotFoundError:
     sys.exit(1)
 
 # Validate template has required placeholders
-required_placeholders = ["{{SUBJECT}}", "{{FIRST_PARAGRAPH}}", "{{SECOND_PARAGRAPH}}", "{{THIRD_PARAGRAPH}}", "{{BODY}}"]
+required_placeholders = [
+    "{{SUBJECT}}",
+    "{{FIRST_PARAGRAPH}}",
+    "{{SECOND_PARAGRAPH}}",
+    "{{THIRD_PARAGRAPH}}",
+    "{{BODY}}",
+]
 missing = [p for p in required_placeholders if p not in latex_template]
 if missing:
     print(f"⚠️ Template missing placeholders: {missing}")
     sys.exit(1)
 
-latex_content = latex_template \
-    .replace("{{SUBJECT}}", latex_escape(subject_raw)) \
-    .replace("{{FIRST_PARAGRAPH}}", first_paragraph) \
-    .replace("{{SECOND_PARAGRAPH}}", second_paragraph) \
-    .replace("{{THIRD_PARAGRAPH}}", third_paragraph) \
+latex_content = (
+    latex_template.replace("{{SUBJECT}}", latex_escape(subject_raw))
+    .replace("{{FIRST_PARAGRAPH}}", first_paragraph)
+    .replace("{{SECOND_PARAGRAPH}}", second_paragraph)
+    .replace("{{THIRD_PARAGRAPH}}", third_paragraph)
     .replace("{{BODY}}", rest_body)
+)
+
 
 # ---- Determine unique filenames ----
 def unique_filename(base_name, ext):
@@ -288,6 +341,7 @@ def unique_filename(base_name, ext):
         filename = f"{base_name}_{counter}.{ext}"
         counter += 1
     return os.path.join(PDF_DIR, filename)
+
 
 tex_file = unique_filename(subject_safe, "tex")
 pdf_file = tex_file.replace(".tex", ".pdf")
@@ -303,11 +357,17 @@ except IOError as e:
 # ---- Compile PDF ----
 try:
     result = subprocess.run(
-        ["pdflatex", "-interaction=nonstopmode", "-output-directory", PDF_DIR, tex_file],
+        [
+            "pdflatex",
+            "-interaction=nonstopmode",
+            "-output-directory",
+            PDF_DIR,
+            tex_file,
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=30,
-        check=False  # Don't raise exception, we'll check manually
+        check=False,  # Don't raise exception, we'll check manually
     )
 
     # pdflatex often returns 0 even with errors when using -interaction=nonstopmode
@@ -315,34 +375,34 @@ try:
     if not os.path.exists(pdf_file):
         print("⚠️ Failed to compile PDF - no output file created")
         print(f"\n--- pdflatex STDOUT ---")
-        stdout_text = result.stdout.decode('utf-8', errors='replace')
+        stdout_text = result.stdout.decode("utf-8", errors="replace")
         print(stdout_text)
 
         if result.stderr:
             print(f"\n--- pdflatex STDERR ---")
-            print(result.stderr.decode('utf-8', errors='replace'))
+            print(result.stderr.decode("utf-8", errors="replace"))
 
         # Try to show the .log file for more details
-        log_file = tex_file.replace('.tex', '.log')
+        log_file = tex_file.replace(".tex", ".log")
         if os.path.exists(log_file):
             print(f"\n--- Last 50 lines of {log_file} ---")
             try:
-                with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
+                with open(log_file, "r", encoding="utf-8", errors="replace") as f:
                     lines = f.readlines()
-                    print(''.join(lines[-50:]))
+                    print("".join(lines[-50:]))
             except Exception as e:
                 print(f"Could not read log file: {e}")
 
         sys.exit(1)
 
     # Check for LaTeX errors even if PDF was created
-    stdout_text = result.stdout.decode('utf-8', errors='replace')
-    if '! LaTeX Error:' in stdout_text or '! Emergency stop' in stdout_text:
+    stdout_text = result.stdout.decode("utf-8", errors="replace")
+    if "! LaTeX Error:" in stdout_text or "! Emergency stop" in stdout_text:
         print(f"⚠️ Warning: PDF created but LaTeX reported errors")
         print(f"\n--- Errors from pdflatex ---")
         # Extract error lines
-        for line in stdout_text.split('\n'):
-            if line.startswith('!') or 'Error' in line or 'Warning' in line:
+        for line in stdout_text.split("\n"):
+            if line.startswith("!") or "Error" in line or "Warning" in line:
                 print(line)
         print()
 
@@ -357,6 +417,7 @@ except FileNotFoundError:
 except Exception as e:
     print(f"⚠️ Unexpected error during PDF compilation: {e}")
     import traceback
+
     traceback.print_exc()
     sys.exit(1)
 
@@ -378,7 +439,7 @@ try:
             f.read(),
             maintype="application",
             subtype="pdf",
-            filename=os.path.basename(pdf_file)
+            filename=os.path.basename(pdf_file),
         )
 except IOError as e:
     print(f"⚠️ Failed to read PDF file: {e}")
@@ -390,7 +451,9 @@ try:
         try:
             server.login(SENDER_EMAIL, SENDER_PASSWORD)
         except smtplib.SMTPAuthenticationError as e:
-            print("⚠️ Authentication failed. Check SENDER_EMAIL / SENDER_PASSWORD or use App Password for Gmail.")
+            print(
+                "⚠️ Authentication failed. Check SENDER_EMAIL / SENDER_PASSWORD or use App Password for Gmail."
+            )
             print(f"Server response: {e}")
             sys.exit(1)
         server.send_message(msg)
@@ -417,5 +480,6 @@ except smtplib.SMTPException as e:
 except Exception as e:
     print(f"⚠️ Failed to send email: {e}")
     import traceback
+
     traceback.print_exc()
     sys.exit(1)
