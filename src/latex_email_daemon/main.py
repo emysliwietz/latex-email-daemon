@@ -115,9 +115,10 @@ def save_email_json(full_msg, uid):
 
     return path, body_text, body_html
 
+
 def process_new_messages(server: IMAPClient, last_seen_uid: int) -> int:
     search_range = f"{last_seen_uid + 1}:*"
-    uids = server.search(["UID", search_range])
+    uids = [uid for uid in server.search(["UID", search_range]) if uid > last_seen_uid]
     if not uids:
         print("📭 No new messages")
         return last_seen_uid
