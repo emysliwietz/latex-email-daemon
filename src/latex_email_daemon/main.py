@@ -197,6 +197,13 @@ def process_new_messages(server: IMAPClient, last_seen_uid: int) -> int:
                     print(f"⚡ Successfully processed UID {uid}")
                     if result.stdout:
                         print(f"Handler output: {result.stdout}")
+                    # Delete the original email from the inbox now that the PDF was sent
+                    try:
+                        server.delete_messages([uid])
+                        server.expunge()
+                        print(f"🗑 Deleted UID {uid} from inbox")
+                    except Exception as del_err:
+                        print(f"⚠️ Could not delete UID {uid} from inbox: {del_err}")
                 else:
                     print(f"⚠️ Handler failed with code {result.returncode}")
                     if result.stderr:
