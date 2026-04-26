@@ -133,3 +133,69 @@ You'll need =pdflatex= installed and on your =PATH=
   left in =JSON_DIR= for debugging.
 - The daemon handles SIGINT/SIGTERM gracefully and finishes the current
   email before exiting.
+
+** Web front-end
+:PROPERTIES:
+:CUSTOM_ID: web-front-end
+:END:
+In addition to the email daemon, a browser-based dashboard is included
+that lets you compose and download PDFs directly — no email round-trip
+needed.
+
+*** Running locally
+:PROPERTIES:
+:CUSTOM_ID: web-running-locally
+:END:
+#+begin_src sh
+pip install flask          # or: poetry install (Flask is now a dependency)
+cd src/latex_email_daemon
+LATEX_TEMPLATE_FILE=../../templates/template.tex python web.py
+#+end_src
+
+Open =http://localhost:5000= in your browser.
+
+*** Running with Docker Compose
+:PROPERTIES:
+:CUSTOM_ID: web-docker
+:END:
+The =docker-compose.yml= now includes a second service, =latex-pdf-web=,
+that runs the web dashboard on port 5000 while the daemon continues
+running in the =latex-email-daemon= service.  Both services share the
+same =template-data= volume, so you only need to place your =template.tex=
+once.
+
+#+begin_src sh
+docker compose up -d
+# Dashboard at http://localhost:5000
+#+end_src
+
+Set =WEB_PORT= in your =.env= to use a different host port.
+
+*** Environment variables (web service)
+:PROPERTIES:
+:CUSTOM_ID: web-env
+:END:
+
+| Variable              | Default          | Description                               |
+|-----------------------+------------------+-------------------------------------------|
+| =LATEX_TEMPLATE_DIR=    | =templates/=       | Scanned for =*.tex= files shown in dropdown |
+| =LATEX_TEMPLATE_FILE=   | =template.tex=     | Fallback single-file template             |
+| =WEB_HOST=              | =0.0.0.0=          | Bind address                              |
+| =WEB_PORT=              | =5000=             | Listen port                               |
+| =WEB_DEBUG=             | =0=                | Set to =1= for Flask debug mode             |
+
+*** Architecture
+:PROPERTIES:
+:CUSTOM_ID: web-architecture
+:END:
+The web front-end reuses all PDF-generation logic through a new shared
+module, =pdf_utils.py=.  Both =handle_email.py= (the original daemon
+handler) and =web.py= import from it — no code is duplicated.
+
+#+begin_example
+latex_email_daemon/
+├── pdf_utils.py       ← shared: escape, html→latex, compile_pdf()
+├── handle_email.py    ← email daemon handler (imports pdf_utils)
+├── web.py             ← Flask web front-end  (imports pdf_utils)
+└── main.py            ← IMAP daemon loop (unchanged)
+#+end_example

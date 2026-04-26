@@ -21,6 +21,26 @@ services:
             - daemon-data:/app/src/latex_email_daemon/data
             - template-data:/app/src/latex_email_daemon/templates
 
+    latex-pdf-web:
+        image: ghcr.io/YOUR_GITHUB_USERNAME/latex-email-daemon:latest
+        container_name: latex-pdf-web
+        restart: unless-stopped
+        command: ["python", "web.py"]
+        environment:
+            # Template discovery — same volume as the daemon
+            - LATEX_TEMPLATE_DIR=templates
+            - LATEX_TEMPLATE_FILE=templates/template.tex
+            # Web server config
+            - WEB_HOST=0.0.0.0
+            - WEB_PORT=5000
+            - WEB_DEBUG=${WEB_DEBUG:-0}
+        ports:
+            - "${WEB_PORT:-5000}:5000"
+        volumes:
+            # Shares the same template volume as the daemon so both see the
+            # same .tex files without any duplication.
+            - template-data:/app/src/latex_email_daemon/templates
+
 volumes:
     daemon-data:
     template-data:

@@ -30,5 +30,10 @@ RUN mkdir -p src/latex_email_daemon/emails src/latex_email_daemon/pdfs src/latex
 
 WORKDIR /app/src/latex_email_daemon
 
-# Run the main script
+# Expose web dashboard port (used when running web.py)
+EXPOSE 5000
+
+# Default: run the email daemon.
+# Override with `command: ["python", "web.py"]` in docker-compose to start
+# the web front-end instead (or alongside the daemon as a separate service).
 CMD ["python", "main.py"]
