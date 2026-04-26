@@ -8,6 +8,7 @@
 
 # Sensitive files
 src/latex_email_daemon/template.tex
+src/latex_email_daemon/*.tex
 
 # Python
 __pycache__/

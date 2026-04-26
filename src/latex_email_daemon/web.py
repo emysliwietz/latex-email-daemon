@@ -1,18 +1,18 @@
 """
-web.py — Web front-end for the latex-email-daemon.
+web.py — Web-Frontend für den latex-email-daemon.
 
-Provides a browser-based dashboard that replaces the email workflow:
-fill in form fields → live-preview the compiled PDF → download.
+Startet ein Browser-Dashboard, das den E-Mail-Workflow ersetzt:
+Felder ausfüllen → PDF live vorschauen → herunterladen.
 
-Run:
+Starten:
     python web.py
 
-Environment variables (same .env as the daemon):
-    LATEX_TEMPLATE_DIR   Directory that contains *.tex templates  (default: templates/)
-    LATEX_TEMPLATE_FILE  Fallback single-file template path       (default: template.tex)
-    WEB_HOST             Host to bind to                          (default: 0.0.0.0)
-    WEB_PORT             Port to listen on                        (default: 5000)
-    WEB_DEBUG            Set to "1" to enable Flask debug mode
+Umgebungsvariablen (dieselbe .env wie der Daemon):
+    LATEX_TEMPLATE_DIR   Verzeichnis mit *.tex-Vorlagen   (Standard: templates/)
+    LATEX_TEMPLATE_FILE  Einzelne Fallback-Vorlage         (Standard: template.tex)
+    WEB_HOST             Bind-Adresse                      (Standard: 0.0.0.0)
+    WEB_PORT             Port                              (Standard: 5000)
+    WEB_DEBUG            Auf "1" setzen für Flask-Debug-Modus
 """
 
 import os
@@ -24,23 +24,25 @@ from dotenv import load_dotenv
 
 from pdf_utils import (
     html_to_latex,
-    split_paragraphs,
-    split_latex_paragraphs,
     compile_pdf,
     sanitize_filename,
+    REQUIRED_PLACEHOLDERS,
 )
 
 # ---------------------------------------------------------------------------
-# Config
+# Konfiguration
 # ---------------------------------------------------------------------------
 
 load_dotenv()
 
-TEMPLATE_DIR        = os.getenv("LATEX_TEMPLATE_DIR",  "templates")
-FALLBACK_TEMPLATE   = os.getenv("LATEX_TEMPLATE_FILE", "template.tex")
-WEB_HOST            = os.getenv("WEB_HOST",  "0.0.0.0")
-WEB_PORT            = int(os.getenv("WEB_PORT", 5000))
-WEB_DEBUG           = os.getenv("WEB_DEBUG", "0") == "1"
+# Verzeichnis dieser Datei — als Ausgangspunkt für die Vorlagensuche
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+TEMPLATE_DIR      = os.getenv("LATEX_TEMPLATE_DIR",  os.path.join(_HERE, "templates"))
+FALLBACK_TEMPLATE = os.getenv("LATEX_TEMPLATE_FILE", os.path.join(_HERE, "template.tex"))
+WEB_HOST          = os.getenv("WEB_HOST",  "0.0.0.0")
+WEB_PORT          = int(os.getenv("WEB_PORT", 5000))
+WEB_DEBUG         = os.getenv("WEB_DEBUG", "0") == "1"
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -48,70 +50,114 @@ log = logging.getLogger("web")
 
 
 # ---------------------------------------------------------------------------
-# Template discovery
+# Vorlagen-Suche
 # ---------------------------------------------------------------------------
 
+def _is_valid_template(path: str) -> bool:
+    """Prüft, ob die Datei alle nötigen Platzhalter enthält."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+        return all(p in content for p in REQUIRED_PLACEHOLDERS)
+    except OSError:
+        return False
+
+
+def _collect_tex_files(*search_roots: str) -> list[str]:
+    """
+    Sucht rekursiv nach .tex-Dateien in den angegebenen Verzeichnissen
+    und gibt nur solche zurück, die alle Pflicht-Platzhalter enthalten.
+    Ergebnisse werden dedupliziert (nach absolutem Pfad).
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+
+    for root in search_roots:
+        if not root:
+            continue
+        if os.path.isfile(root) and root.endswith(".tex"):
+            # Einzelne Datei statt Verzeichnis angegeben
+            abs_path = os.path.abspath(root)
+            if abs_path not in seen and _is_valid_template(abs_path):
+                seen.add(abs_path)
+                result.append(abs_path)
+            continue
+        if not os.path.isdir(root):
+            continue
+        for dirpath, _dirs, files in os.walk(root):
+            for fname in sorted(files):
+                if not fname.endswith(".tex"):
+                    continue
+                abs_path = os.path.abspath(os.path.join(dirpath, fname))
+                if abs_path not in seen and _is_valid_template(abs_path):
+                    seen.add(abs_path)
+                    result.append(abs_path)
+
+    return result
+
+
 def list_templates() -> list[dict]:
-    """Return [{name, path}] for every .tex file we can find."""
-    found: list[dict] = []
+    """
+    Gibt [{name, path}] für jede gefundene Vorlage zurück.
 
-    # Scan TEMPLATE_DIR
-    if os.path.isdir(TEMPLATE_DIR):
-        for path in sorted(glob.glob(os.path.join(TEMPLATE_DIR, "*.tex"))):
-            found.append({"name": os.path.basename(path), "path": path})
-
-    # Also include the single fallback template if it exists and isn't already listed
-    if os.path.isfile(FALLBACK_TEMPLATE):
-        abs_fallback = os.path.abspath(FALLBACK_TEMPLATE)
-        if not any(os.path.abspath(t["path"]) == abs_fallback for t in found):
-            found.append({"name": os.path.basename(FALLBACK_TEMPLATE), "path": FALLBACK_TEMPLATE})
-
-    return found
+    Suchreihenfolge:
+      1. LATEX_TEMPLATE_DIR  (Docker-Volume oder konfiguriertes Verzeichnis)
+      2. LATEX_TEMPLATE_FILE (einzelne Fallback-Datei)
+      3. Verzeichnisbaum ab dem Speicherort dieser Datei (_HERE)
+      4. Arbeitsverzeichnis (falls abweichend)
+    """
+    paths = _collect_tex_files(
+        TEMPLATE_DIR,
+        FALLBACK_TEMPLATE,
+        _HERE,
+        os.getcwd(),
+    )
+    return [{"name": os.path.basename(p), "path": p} for p in paths]
 
 
 def resolve_template(name: str | None) -> str:
-    """Resolve a template name to its file path, or raise ValueError."""
+    """Löst einen Vorlagennamen in einen Dateipfad auf. Wirft ValueError bei Fehler."""
     templates = list_templates()
     if not templates:
-        raise ValueError("No LaTeX templates found. Mount a template volume or set LATEX_TEMPLATE_FILE.")
-
+        raise ValueError(
+            "Keine LaTeX-Vorlagen gefunden. "
+            "Bitte ein Template-Volume einbinden oder LATEX_TEMPLATE_FILE setzen."
+        )
     if name:
         for t in templates:
             if t["name"] == name:
                 return t["path"]
-        raise ValueError(f"Unknown template: {name!r}")
-
-    # Default: first found
+        raise ValueError(f"Unbekannte Vorlage: {name!r}")
     return templates[0]["path"]
 
 
 # ---------------------------------------------------------------------------
-# API routes
+# API-Routen
 # ---------------------------------------------------------------------------
 
 @app.get("/api/templates")
 def api_templates():
-    """Return the list of available templates."""
+    """Gibt die Liste der verfügbaren Vorlagen zurück."""
     return jsonify(list_templates())
 
 
 @app.post("/api/compile")
 def api_compile():
     """
-    Compile a PDF from form fields and return the PDF bytes.
+    Kompiliert ein PDF aus den Formularfeldern und gibt die PDF-Bytes zurück.
 
-    Accepts JSON body:
+    Erwartet JSON-Body:
         {
-            "template":          "<filename.tex>",   // optional
+            "template":          "<dateiname.tex>",   // optional
             "subject":           "…",
             "first_paragraph":   "…",
             "second_paragraph":  "…",
             "third_paragraph":   "…",
             "body":              "…",
-            "body_is_html":      false               // optional, default false
+            "body_is_html":      false                // optional
         }
 
-    Returns: application/pdf  (or JSON error with appropriate status)
+    Gibt: application/pdf zurück (oder JSON-Fehler mit passendem Status)
     """
     data = request.get_json(force=True, silent=True) or {}
 
@@ -123,21 +169,14 @@ def api_compile():
     body_is_html     = bool(data.get("body_is_html", False))
     template_name    = data.get("template") or None
 
-    # Convert body if it contains HTML
-    if body_is_html and raw_body:
-        latex_body = html_to_latex(raw_body)
-        # For the web form we treat the whole textarea as a single body block;
-        # the paragraph-splitting step only applies when ingesting emails.
-        body = latex_body
-    else:
-        body = raw_body
+    body = html_to_latex(raw_body) if (body_is_html and raw_body) else raw_body
 
     try:
         template_path = resolve_template(template_name)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    log.info("Compiling PDF | template=%s subject=%r", template_path, subject)
+    log.info("Kompiliere PDF | Vorlage=%s Betreff=%r", template_path, subject)
 
     try:
         pdf_bytes = compile_pdf(
@@ -149,10 +188,10 @@ def api_compile():
             body=body,
         )
     except RuntimeError as e:
-        log.error("Compilation error: %s", e)
+        log.error("Kompilierfehler: %s", e)
         return jsonify({"error": str(e)}), 500
 
-    safe_name = sanitize_filename(subject) if subject else "document"
+    safe_name = sanitize_filename(subject) if subject else "dokument"
 
     return Response(
         pdf_bytes,
@@ -166,22 +205,22 @@ def api_compile():
 
 @app.post("/api/download")
 def api_download():
-    """Same as /api/compile but forces a file download."""
+    """Wie /api/compile, erzwingt aber einen Datei-Download."""
     resp = api_compile()
     if isinstance(resp, Response) and resp.status_code == 200:
         data = request.get_json(force=True, silent=True) or {}
-        subject = data.get("subject", "document").strip()
-        safe_name = sanitize_filename(subject) if subject else "document"
+        subject = data.get("subject", "dokument").strip()
+        safe_name = sanitize_filename(subject) if subject else "dokument"
         resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.pdf"'
     return resp
 
 
 # ---------------------------------------------------------------------------
-# Dashboard HTML
+# Dashboard-HTML
 # ---------------------------------------------------------------------------
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
-<html lang="en">
+<html lang="de">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -197,17 +236,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   --mist:     #e8e2d6;
   --dust:     #c9bfad;
   --copper:   #b87c4c;
-  --rust:     #8b4513;
   --charcoal: #2a2520;
   --ash:      #6b6258;
-  --cream:    #faf7f2;
   --error:    #c0392b;
 
-  --form-w: 440px;
+  --form-w: 460px;
   --radius: 3px;
-  --mono: 'DM Mono', monospace;
-  --serif: 'Cormorant Garamond', Georgia, serif;
-  --sans: 'Manrope', system-ui, sans-serif;
+  --mono:   'DM Mono', monospace;
+  --serif:  'Cormorant Garamond', Georgia, serif;
+  --sans:   'Manrope', system-ui, sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -217,12 +254,12 @@ html, body {
   background: var(--ink);
   color: var(--paper);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 15.5px;
   line-height: 1.6;
   overflow: hidden;
 }
 
-/* ── Layout ─────────────────────────────────────────────────────────────── */
+/* ── Layout ──────────────────────────────────────────────────────────────── */
 #root {
   display: flex;
   height: 100vh;
@@ -247,7 +284,7 @@ html, body {
 
 .wordmark {
   font-family: var(--serif);
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--paper);
@@ -257,7 +294,7 @@ html, body {
 }
 
 .wordmark-dot {
-  width: 8px; height: 8px;
+  width: 9px; height: 9px;
   background: var(--copper);
   border-radius: 50%;
   flex-shrink: 0;
@@ -265,12 +302,12 @@ html, body {
 
 .wordmark-sub {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 300;
   color: var(--ash);
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  margin-top: 3px;
+  margin-top: 4px;
 }
 
 #form-scroll {
@@ -285,10 +322,10 @@ html, body {
 #form-scroll::-webkit-scrollbar-track { background: transparent; }
 #form-scroll::-webkit-scrollbar-thumb { background: #3a342e; border-radius: 2px; }
 
-/* ── Form chrome ─────────────────────────────────────────────────────────── */
+/* ── Formularelemente ────────────────────────────────────────────────────── */
 .section-label {
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 500;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -309,17 +346,22 @@ html, body {
 
 .section-label:first-child { margin-top: 0; }
 
-.field {
-  margin-bottom: 14px;
-}
+.field { margin-bottom: 15px; }
 
 .field label {
   display: block;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--dust);
   margin-bottom: 5px;
   letter-spacing: 0.03em;
+}
+
+.field label .placeholder-tag {
+  color: var(--ash);
+  font-weight: 300;
+  font-family: var(--mono);
+  font-size: 10.5px;
 }
 
 .field input,
@@ -331,7 +373,7 @@ html, body {
   border-radius: var(--radius);
   color: var(--paper);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 14.5px;
   padding: 9px 12px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -353,27 +395,25 @@ html, body {
   box-shadow: 0 0 0 3px rgba(184,124,76,0.12);
 }
 
-.field textarea { min-height: 80px; }
-.field textarea.tall { min-height: 130px; }
+.field textarea          { min-height: 82px; }
+.field textarea.tall     { min-height: 140px; }
 
 .field select {
   cursor: pointer;
-  appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b6258' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
-  padding-right: 32px;
+  padding-right: 34px;
 }
 
-/* ── Hint pills ───────────────────────────────────────────────────────────── */
 .field-hint {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ash);
   margin-top: 4px;
   font-family: var(--mono);
 }
 
-/* ── Actions ─────────────────────────────────────────────────────────────── */
+/* ── Schaltflächen ───────────────────────────────────────────────────────── */
 #actions {
   display: flex;
   gap: 8px;
@@ -382,11 +422,11 @@ html, body {
 
 .btn {
   flex: 1;
-  padding: 11px 16px;
+  padding: 12px 16px;
   border-radius: var(--radius);
   border: none;
   font-family: var(--sans);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -395,11 +435,11 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .btn:active { transform: scale(0.97); }
-.btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
 
 .btn-primary {
   background: var(--copper);
@@ -412,9 +452,13 @@ html, body {
   color: var(--dust);
   border: 1px solid #3a342e;
 }
-.btn-ghost:hover:not(:disabled) { background: #332e28; border-color: var(--copper); color: var(--paper); }
+.btn-ghost:hover:not(:disabled) {
+  background: #332e28;
+  border-color: var(--copper);
+  color: var(--paper);
+}
 
-/* ── Preview pane ────────────────────────────────────────────────────────── */
+/* ── Vorschau-Bereich ────────────────────────────────────────────────────── */
 #preview-pane {
   flex: 1;
   display: flex;
@@ -425,18 +469,18 @@ html, body {
 
 #preview-toolbar {
   flex-shrink: 0;
-  height: 48px;
+  height: 50px;
   background: #191512;
   border-bottom: 1px solid #2a2520;
   display: flex;
   align-items: center;
-  padding: 0 20px;
-  gap: 16px;
+  padding: 0 22px;
+  gap: 18px;
 }
 
 .toolbar-title {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--ash);
@@ -445,23 +489,23 @@ html, body {
 
 #status-pill {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 10.5px;
   letter-spacing: 0.06em;
-  padding: 3px 10px;
+  padding: 3px 11px;
   border-radius: 99px;
   background: #2a2520;
   color: var(--ash);
   transition: all 0.2s;
 }
 #status-pill.compiling { background: rgba(184,124,76,0.15); color: var(--copper); }
-#status-pill.ready    { background: rgba(80,160,80,0.15);  color: #6dbb6d; }
-#status-pill.error    { background: rgba(192,57,43,0.15);  color: #e57575; }
+#status-pill.ready     { background: rgba(80,160,80,0.15);  color: #6dbb6d; }
+#status-pill.error     { background: rgba(192,57,43,0.15);  color: #e57575; }
 
 #auto-preview-toggle {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ash);
   cursor: pointer;
   user-select: none;
@@ -479,7 +523,6 @@ html, body {
   position: relative;
 }
 
-/* Placeholder shown before first compile */
 #preview-placeholder {
   position: absolute;
   inset: 0;
@@ -493,14 +536,14 @@ html, body {
 
 .placeholder-icon {
   font-family: var(--serif);
-  font-size: 80px;
+  font-size: 88px;
   opacity: 0.06;
   line-height: 1;
 }
 
 .placeholder-text {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.1em;
   color: var(--ash);
   opacity: 0.5;
@@ -514,7 +557,7 @@ html, body {
   background: #333;
 }
 
-/* ── Spinner ─────────────────────────────────────────────────────────────── */
+/* ── Ladeindikator ───────────────────────────────────────────────────────── */
 #spinner-overlay {
   position: absolute;
   inset: 0;
@@ -526,7 +569,7 @@ html, body {
 }
 
 .spinner {
-  width: 32px; height: 32px;
+  width: 34px; height: 34px;
   border: 2px solid #3a342e;
   border-top-color: var(--copper);
   border-radius: 50%;
@@ -535,34 +578,32 @@ html, body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Error toast ─────────────────────────────────────────────────────────── */
+/* ── Fehler-Hinweis ──────────────────────────────────────────────────────── */
 #error-toast {
   position: fixed;
   bottom: 24px;
   left: 50%;
-  transform: translateX(-50%) translateY(80px);
+  transform: translateX(-50%) translateY(90px);
   background: #3a1a18;
   border: 1px solid var(--error);
   border-radius: 4px;
-  padding: 12px 20px;
-  max-width: 520px;
+  padding: 13px 22px;
+  max-width: 540px;
   width: calc(100vw - 48px);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   color: #e57575;
-  line-height: 1.5;
+  line-height: 1.55;
   z-index: 100;
   transition: transform 0.3s cubic-bezier(.16,1,.3,1);
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-#error-toast.visible {
-  transform: translateX(-50%) translateY(0);
-}
+#error-toast.visible { transform: translateX(-50%) translateY(0); }
 
-/* ── Responsive: stack on narrow screens ─────────────────────────────────── */
-@media (max-width: 900px) {
+/* ── Responsiv ───────────────────────────────────────────────────────────── */
+@media (max-width: 920px) {
   #root { flex-direction: column; overflow-y: auto; }
   #sidebar { width: 100%; height: auto; overflow: visible; }
   #form-scroll { overflow: visible; }
@@ -575,93 +616,119 @@ html, body {
 
 <div id="root">
 
-  <!-- ── Left sidebar: form ── -->
+  <!-- ── Linke Leiste: Formular ── -->
   <aside id="sidebar">
     <div id="sidebar-header">
       <div class="wordmark">
         <span class="wordmark-dot"></span>
         LaTeX PDF Studio
       </div>
-      <div class="wordmark-sub">latex-email-daemon · web front-end</div>
+      <div class="wordmark-sub">latex-email-daemon · Web-Oberfläche</div>
     </div>
 
     <div id="form-scroll">
 
-      <div class="section-label">Template</div>
+      <div class="section-label">Vorlage</div>
 
       <div class="field">
-        <label for="template-select">Template file</label>
+        <label for="template-select">Vorlagendatei</label>
         <select id="template-select">
-          <option value="">Loading…</option>
+          <option value="">Wird geladen…</option>
         </select>
       </div>
 
-      <div class="section-label">Document</div>
+      <div class="section-label">Dokument</div>
 
       <div class="field">
-        <label for="f-subject">Subject / Title</label>
-        <input id="f-subject" type="text" placeholder="e.g. Kündigung Mietvertrag"/>
+        <label for="f-subject">
+          Betreff / Titel
+          <span class="placeholder-tag">· {{SUBJECT}}</span>
+        </label>
+        <input id="f-subject" type="text" placeholder="z. B. Kündigung Mietvertrag"/>
       </div>
 
-      <div class="section-label">Paragraphs</div>
+      <div class="section-label">Abschnitte</div>
 
       <div class="field">
-        <label for="f-first">First paragraph <span style="color:var(--ash);font-weight:300">· {{FIRST_PARAGRAPH}}</span></label>
-        <textarea id="f-first" rows="3" placeholder="Recipient address&#10;Name, Street&#10;City"></textarea>
-        <div class="field-hint">Typical use: recipient address block</div>
+        <label for="f-first">
+          Adresse
+          <span class="placeholder-tag">· {{FIRST_PARAGRAPH}}</span>
+        </label>
+        <textarea id="f-first" rows="3"
+          placeholder="Empfänger&#10;Musterstraße 12&#10;12345 Musterstadt"></textarea>
+        <div class="field-hint">Empfängeranschrift</div>
       </div>
 
       <div class="field">
-        <label for="f-second">Second paragraph <span style="color:var(--ash);font-weight:300">· {{SECOND_PARAGRAPH}}</span></label>
-        <textarea id="f-second" rows="2" placeholder="e.g. Cologne, 26 April 2026"></textarea>
-        <div class="field-hint">Typical use: date or place+date</div>
+        <label for="f-second">
+          Datum
+          <span class="placeholder-tag">· {{SECOND_PARAGRAPH}}</span>
+        </label>
+        <textarea id="f-second" rows="2"
+          placeholder="Köln, 26. April 2026"></textarea>
+        <div class="field-hint">Ort und Datum</div>
       </div>
 
       <div class="field">
-        <label for="f-third">Third paragraph <span style="color:var(--ash);font-weight:300">· {{THIRD_PARAGRAPH}}</span></label>
-        <textarea id="f-third" rows="2" placeholder="e.g. Dear Ms. Mustermann,"></textarea>
-        <div class="field-hint">Typical use: opening salutation</div>
+        <label for="f-third">
+          Anrede
+          <span class="placeholder-tag">· {{THIRD_PARAGRAPH}}</span>
+        </label>
+        <textarea id="f-third" rows="2"
+          placeholder="Sehr geehrte Damen und Herren,"></textarea>
+        <div class="field-hint">Briefliche Anrede</div>
       </div>
 
-      <div class="section-label">Body</div>
+      <div class="section-label">Inhalt</div>
 
       <div class="field">
-        <label for="f-body">Letter body <span style="color:var(--ash);font-weight:300">· {{BODY}}</span></label>
-        <textarea id="f-body" class="tall" placeholder="Main letter text…&#10;&#10;Supports multiple paragraphs."></textarea>
-        <div class="field-hint">Separate paragraphs with a blank line</div>
+        <label for="f-body">
+          Brieftext
+          <span class="placeholder-tag">· {{BODY}}</span>
+        </label>
+        <textarea id="f-body" class="tall"
+          placeholder="Haupttext des Briefes…&#10;&#10;Absätze durch eine Leerzeile trennen."></textarea>
+        <div class="field-hint">Absätze durch Leerzeile trennen</div>
       </div>
 
       <div id="actions">
         <button class="btn btn-primary" id="btn-preview" onclick="triggerCompile(false)">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          Preview
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </svg>
+          Vorschau
         </button>
         <button class="btn btn-ghost" id="btn-download" onclick="triggerCompile(true)">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Herunterladen
         </button>
       </div>
 
     </div><!-- /form-scroll -->
   </aside>
 
-  <!-- ── Right: preview ── -->
+  <!-- ── Rechts: Vorschau ── -->
   <main id="preview-pane">
     <div id="preview-toolbar">
-      <span class="toolbar-title">PDF Preview</span>
+      <span class="toolbar-title">PDF-Vorschau</span>
       <label id="auto-preview-toggle">
         <input type="checkbox" id="auto-preview-cb" checked/>
-        Auto-preview
+        Auto-Vorschau
       </label>
-      <span id="status-pill">idle</span>
+      <span id="status-pill">bereit</span>
     </div>
 
     <div id="preview-area">
       <div id="preview-placeholder">
         <div class="placeholder-icon">&#9998;</div>
-        <div class="placeholder-text">Fill in the fields and click Preview</div>
+        <div class="placeholder-text">Felder ausfüllen und Vorschau klicken</div>
       </div>
-      <iframe id="pdf-frame" title="PDF Preview"></iframe>
+      <iframe id="pdf-frame" title="PDF-Vorschau"></iframe>
       <div id="spinner-overlay"><div class="spinner"></div></div>
     </div>
   </main>
@@ -671,14 +738,14 @@ html, body {
 <div id="error-toast"></div>
 
 <script>
-/* ── State ────────────────────────────────────────────────────────────────── */
-let compileTimer    = null;
-let currentObjUrl   = null;
-let isCompiling     = false;
+/* ── Zustand ──────────────────────────────────────────────────────────────── */
+let compileTimer  = null;
+let currentObjUrl = null;
+let isCompiling   = false;
 
-const DEBOUNCE_MS   = 1400;
+const DEBOUNCE_MS = 1400;
 
-/* ── DOM refs ─────────────────────────────────────────────────────────────── */
+/* ── DOM ──────────────────────────────────────────────────────────────────── */
 const statusPill    = document.getElementById('status-pill');
 const spinner       = document.getElementById('spinner-overlay');
 const pdfFrame      = document.getElementById('pdf-frame');
@@ -689,7 +756,7 @@ const templateSel   = document.getElementById('template-select');
 
 const fields = ['f-subject','f-first','f-second','f-third','f-body'];
 
-/* ── Template loading ─────────────────────────────────────────────────────── */
+/* ── Vorlagen laden ───────────────────────────────────────────────────────── */
 async function loadTemplates() {
   try {
     const res  = await fetch('/api/templates');
@@ -700,7 +767,7 @@ async function loadTemplates() {
     if (list.length === 0) {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = '⚠ No templates found';
+      opt.textContent = '⚠ Keine Vorlagen gefunden';
       templateSel.appendChild(opt);
       return;
     }
@@ -712,26 +779,26 @@ async function loadTemplates() {
       templateSel.appendChild(opt);
     });
   } catch(e) {
-    templateSel.innerHTML = '<option value="">Error loading templates</option>';
+    templateSel.innerHTML = '<option value="">Fehler beim Laden der Vorlagen</option>';
   }
 }
 
-/* ── Status pill ─────────────────────────────────────────────────────────── */
+/* ── Status-Anzeige ───────────────────────────────────────────────────────── */
 function setStatus(state, label) {
-  statusPill.className  = state;
+  statusPill.className   = state;
   statusPill.textContent = label;
 }
 
-/* ── Error toast ─────────────────────────────────────────────────────────── */
+/* ── Fehler-Toast ─────────────────────────────────────────────────────────── */
 let toastTimer = null;
 function showError(msg) {
   errorToast.textContent = msg;
   errorToast.classList.add('visible');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => errorToast.classList.remove('visible'), 8000);
+  toastTimer = setTimeout(() => errorToast.classList.remove('visible'), 9000);
 }
 
-/* ── Build payload ───────────────────────────────────────────────────────── */
+/* ── Anfrage zusammenstellen ──────────────────────────────────────────────── */
 function buildPayload() {
   return {
     template:          templateSel.value || null,
@@ -744,13 +811,13 @@ function buildPayload() {
   };
 }
 
-/* ── Compile & show ──────────────────────────────────────────────────────── */
+/* ── Kompilieren & anzeigen ───────────────────────────────────────────────── */
 async function triggerCompile(forDownload = false) {
   if (isCompiling) return;
   isCompiling = true;
   clearTimeout(compileTimer);
 
-  setStatus('compiling', 'compiling…');
+  setStatus('compiling', 'kompiliert…');
   spinner.style.display = 'flex';
   document.getElementById('btn-preview').disabled  = true;
   document.getElementById('btn-download').disabled = true;
@@ -766,41 +833,33 @@ async function triggerCompile(forDownload = false) {
 
     if (!res.ok) {
       let errMsg = `HTTP ${res.status}`;
-      try {
-        const j = await res.json();
-        errMsg = j.error || errMsg;
-      } catch(_) {}
+      try { const j = await res.json(); errMsg = j.error || errMsg; } catch(_) {}
       throw new Error(errMsg);
     }
 
     const blob = await res.blob();
 
     if (forDownload) {
-      /* Trigger browser download */
-      const subject = document.getElementById('f-subject').value.trim() || 'document';
+      const subject = document.getElementById('f-subject').value.trim() || 'dokument';
       const safe    = subject.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 50);
       const url     = URL.createObjectURL(blob);
       const a       = document.createElement('a');
-      a.href        = url;
-      a.download    = safe + '.pdf';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      a.href = url; a.download = safe + '.pdf';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      setStatus('ready', 'downloaded ✓');
+      setStatus('ready', 'heruntergeladen ✓');
     } else {
-      /* Show in iframe */
       if (currentObjUrl) URL.revokeObjectURL(currentObjUrl);
-      currentObjUrl  = URL.createObjectURL(blob);
-      pdfFrame.src   = currentObjUrl;
-      pdfFrame.style.display = 'block';
+      currentObjUrl = URL.createObjectURL(blob);
+      pdfFrame.src  = currentObjUrl;
+      pdfFrame.style.display    = 'block';
       placeholder.style.display = 'none';
-      setStatus('ready', 'ready ✓');
+      setStatus('ready', 'fertig ✓');
     }
 
   } catch(e) {
-    setStatus('error', 'error');
-    showError('Compilation error:\n' + e.message);
+    setStatus('error', 'Fehler');
+    showError('Kompilierfehler:\n' + e.message);
   } finally {
     spinner.style.display = 'none';
     isCompiling = false;
@@ -809,11 +868,11 @@ async function triggerCompile(forDownload = false) {
   }
 }
 
-/* ── Auto-preview debounce ────────────────────────────────────────────────── */
+/* ── Auto-Vorschau mit Entprellung ────────────────────────────────────────── */
 function scheduleAutoPreview() {
   if (!autoPreviewCb.checked) return;
   clearTimeout(compileTimer);
-  setStatus('compiling', 'waiting…');
+  setStatus('compiling', 'warte…');
   compileTimer = setTimeout(() => triggerCompile(false), DEBOUNCE_MS);
 }
 
@@ -824,7 +883,7 @@ fields.forEach(id => {
 
 templateSel.addEventListener('change', scheduleAutoPreview);
 
-/* ── Init ────────────────────────────────────────────────────────────────── */
+/* ── Start ────────────────────────────────────────────────────────────────── */
 loadTemplates();
 </script>
 </body>
@@ -838,20 +897,20 @@ def dashboard():
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Einstiegspunkt
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     templates = list_templates()
     if templates:
-        log.info("Found %d template(s):", len(templates))
+        log.info("Gefundene Vorlagen (%d):", len(templates))
         for t in templates:
             log.info("  • %s  (%s)", t["name"], t["path"])
     else:
         log.warning(
-            "No templates found! Mount your template volume or set "
-            "LATEX_TEMPLATE_FILE / LATEX_TEMPLATE_DIR."
+            "Keine Vorlagen gefunden! Bitte ein Template-Volume einbinden "
+            "oder LATEX_TEMPLATE_FILE / LATEX_TEMPLATE_DIR setzen."
         )
 
-    log.info("Starting web dashboard on http://%s:%d", WEB_HOST, WEB_PORT)
+    log.info("Starte Web-Dashboard auf http://%s:%d", WEB_HOST, WEB_PORT)
     app.run(host=WEB_HOST, port=WEB_PORT, debug=WEB_DEBUG)
