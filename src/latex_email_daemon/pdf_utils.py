@@ -177,6 +177,63 @@ def split_latex_paragraphs(latex_text: str) -> Tuple[str, str, str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Plain-text → LaTeX converters (used by the web front-end)
+# ---------------------------------------------------------------------------
+
+def plain_to_latex_lines(text: str) -> str:
+    """
+    Convert plain multiline text into a LaTeX line-break sequence.
+
+    Every line is LaTeX-escaped; lines are joined with ' \\\\\\n' so that
+    LaTeX renders each line on its own line.  Suitable for address blocks,
+    date lines, and salutations entered in the web form.
+
+    Example input:
+        Kal Meier
+        Winkelstraße 3
+        4023, Stadt
+
+    Example output:
+        Kal Meier \\\\
+        Winkelstra\\ss{}e 3 \\\\
+        4023, Stadt
+    """
+    if not text or not text.strip():
+        return ""
+    lines = text.splitlines()
+    # Drop trailing blank lines
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return ""
+    return " \\\\\n".join(latex_escape(line) for line in lines)
+
+
+def plain_to_latex_body(text: str) -> str:
+    """
+    Convert a plain-text letter body (paragraphs separated by blank lines)
+    into LaTeX.
+
+    Each paragraph is LaTeX-escaped; within a paragraph, single line breaks
+    are collapsed to a space (standard LaTeX behaviour).  Paragraphs are
+    separated by a blank line, which LaTeX treats as a paragraph break.
+    """
+    if not text or not text.strip():
+        return ""
+    # Split on one or more blank lines
+    paragraphs = re.split(r'\n[ \t]*\n', text.strip())
+    result = []
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        # Escape each line, then join with space (single newlines = spaces in LaTeX)
+        lines = [latex_escape(line) for line in para.splitlines() if line.strip()]
+        result.append(" ".join(lines))
+    return "\n\n".join(result)
+
+
+# ---------------------------------------------------------------------------
 # Core PDF compilation
 # ---------------------------------------------------------------------------
 
