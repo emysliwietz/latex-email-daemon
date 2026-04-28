@@ -21,7 +21,7 @@ import os
 import re
 import logging
 
-from flask import Flask, request, Response, jsonify, render_template_string
+from flask import Flask, request, Response, jsonify
 from dotenv import load_dotenv
 
 from pdf_utils import (
@@ -1493,7 +1493,7 @@ renderInstantPreview();
 
 @app.get("/")
 def dashboard():
-    return render_template_string(DASHBOARD_HTML)
+    return Response(DASHBOARD_HTML, mimetype="text/html")
 
 # ── Einstiegspunkt ────────────────────────────────────────────────────────────
 
