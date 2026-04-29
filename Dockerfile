@@ -1,7 +1,6 @@
 FROM python:3.13-slim
 
 # Install LaTeX and clean up in one layer to reduce image size
-# Updated LaTeX installation layer
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     texlive-latex-base \
@@ -14,20 +13,22 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Copy dependency files
-COPY pyproject.toml poetry.lock ./
+# Install Python dependencies directly with pip — no Poetry needed at runtime
+RUN pip install --no-cache-dir \
+    "imapclient>=3.1.0,<4.0.0" \
+    "pyzmail36>=1.0.5,<2.0.0" \
+    "python-dotenv>=1.0.0" \
+    "beautifulsoup4>=4.14.3,<5.0.0" \
+    "flask>=3.0.0,<4.0.0"
 
-# Install poetry and dependencies
-RUN pip install --no-cache-dir poetry && \
-    poetry config virtualenvs.create false && \
-    poetry lock --no-update && \
-    poetry install --only main --no-root --no-interaction --no-ansi
-
-# Copy application code (excluding template.tex - that goes in a volume)
+# Copy application code
 COPY src/latex_email_daemon/*.py ./src/latex_email_daemon/
 
 # Create necessary directories
-RUN mkdir -p src/latex_email_daemon/emails src/latex_email_daemon/pdfs src/latex_email_daemon/data src/latex_email_daemon/templates
+RUN mkdir -p src/latex_email_daemon/emails \
+             src/latex_email_daemon/pdfs \
+             src/latex_email_daemon/data \
+             src/latex_email_daemon/templates
 
 WORKDIR /app/src/latex_email_daemon
 
