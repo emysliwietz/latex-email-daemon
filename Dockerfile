@@ -20,6 +20,7 @@ COPY pyproject.toml poetry.lock ./
 # Install poetry and dependencies
 RUN pip install --no-cache-dir poetry && \
     poetry config virtualenvs.create false && \
+    poetry lock --no-update && \
     poetry install --only main --no-root --no-interaction --no-ansi
 
 # Copy application code (excluding template.tex - that goes in a volume)
