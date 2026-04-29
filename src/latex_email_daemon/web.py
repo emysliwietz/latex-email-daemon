@@ -39,11 +39,13 @@ load_dotenv()
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-TEMPLATE_DIR      = os.getenv("LATEX_TEMPLATE_DIR",  os.path.join(_HERE, "templates"))
-FALLBACK_TEMPLATE = os.getenv("LATEX_TEMPLATE_FILE", os.path.join(_HERE, "template.tex"))
-WEB_HOST          = os.getenv("WEB_HOST",  "0.0.0.0")
-WEB_PORT          = int(os.getenv("WEB_PORT", 5000))
-WEB_DEBUG         = os.getenv("WEB_DEBUG", "0") == "1"
+TEMPLATE_DIR = os.getenv("LATEX_TEMPLATE_DIR", os.path.join(_HERE, "templates"))
+FALLBACK_TEMPLATE = os.getenv(
+    "LATEX_TEMPLATE_FILE", os.path.join(_HERE, "template.tex")
+)
+WEB_HOST = os.getenv("WEB_HOST", "0.0.0.0")
+WEB_PORT = int(os.getenv("WEB_PORT", 5000))
+WEB_DEBUG = os.getenv("WEB_DEBUG", "0") == "1"
 
 # Schreibverzeichnis — neue/bearbeitete Vorlagen werden hier gespeichert
 TEMPLATE_WRITE_DIR = os.path.abspath(TEMPLATE_DIR)
@@ -55,6 +57,7 @@ log = logging.getLogger("web")
 
 
 # ── Vorlagen-Suche ────────────────────────────────────────────────────────────
+
 
 def _is_valid_template(path: str) -> bool:
     try:
@@ -79,8 +82,12 @@ def _collect_tex_files(*search_roots: str) -> list[str]:
             continue
         if os.path.isfile(root) and root.endswith(".tex"):
             abs_path = os.path.abspath(root)
-            name     = os.path.basename(abs_path)
-            if abs_path not in seen_paths and name not in seen_names and _is_valid_template(abs_path):
+            name = os.path.basename(abs_path)
+            if (
+                abs_path not in seen_paths
+                and name not in seen_names
+                and _is_valid_template(abs_path)
+            ):
                 seen_paths.add(abs_path)
                 seen_names.add(name)
                 result.append(abs_path)
@@ -92,8 +99,12 @@ def _collect_tex_files(*search_roots: str) -> list[str]:
                 if not fname.endswith(".tex"):
                     continue
                 abs_path = os.path.abspath(os.path.join(dirpath, fname))
-                name     = fname
-                if abs_path not in seen_paths and name not in seen_names and _is_valid_template(abs_path):
+                name = fname
+                if (
+                    abs_path not in seen_paths
+                    and name not in seen_names
+                    and _is_valid_template(abs_path)
+                ):
                     seen_paths.add(abs_path)
                     seen_names.add(name)
                     result.append(abs_path)
@@ -104,8 +115,8 @@ def list_templates() -> list[dict]:
     paths = _collect_tex_files(TEMPLATE_DIR, FALLBACK_TEMPLATE, _HERE, os.getcwd())
     return [
         {
-            "name":     os.path.basename(p),
-            "path":     p,
+            "name": os.path.basename(p),
+            "path": p,
             "writable": os.path.abspath(os.path.dirname(p)) == TEMPLATE_WRITE_DIR,
         }
         for p in paths
@@ -131,7 +142,7 @@ def _safe_write_path(name: str) -> str:
         raise ValueError("Leerer Dateiname")
     if not name.endswith(".tex"):
         name += ".tex"
-    if not re.match(r'^[a-zA-Z0-9_\-\.]+$', name):
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", name):
         raise ValueError(f"Ungültiger Dateiname: {name!r}")
     path = os.path.abspath(os.path.join(TEMPLATE_WRITE_DIR, name))
     if not path.startswith(TEMPLATE_WRITE_DIR + os.sep):
@@ -140,6 +151,7 @@ def _safe_write_path(name: str) -> str:
 
 
 # ── API-Routen ────────────────────────────────────────────────────────────────
+
 
 @app.get("/api/templates")
 def api_templates():
@@ -157,16 +169,18 @@ def api_template_get(name):
             content = f.read()
     except OSError as e:
         return jsonify({"error": str(e)}), 500
-    return jsonify({
-        "name":     name,
-        "content":  content,
-        "writable": os.path.abspath(os.path.dirname(path)) == TEMPLATE_WRITE_DIR,
-    })
+    return jsonify(
+        {
+            "name": name,
+            "content": content,
+            "writable": os.path.abspath(os.path.dirname(path)) == TEMPLATE_WRITE_DIR,
+        }
+    )
 
 
 @app.put("/api/templates/<name>")
 def api_template_put(name):
-    data    = request.get_json(force=True, silent=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     content = data.get("content", "")
     try:
         path = _safe_write_path(name)
@@ -188,7 +202,12 @@ def api_template_delete(name):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     if not os.path.isfile(path):
-        return jsonify({"error": "Vorlage nicht im Schreibverzeichnis — schreibgeschützt"}), 403
+        return (
+            jsonify(
+                {"error": "Vorlage nicht im Schreibverzeichnis — schreibgeschützt"}
+            ),
+            403,
+        )
     try:
         os.remove(path)
     except OSError as e:
@@ -201,19 +220,19 @@ def api_template_delete(name):
 def api_compile():
     data = request.get_json(force=True, silent=True) or {}
 
-    subject       = data.get("subject",          "").strip()
-    raw_first     = data.get("first_paragraph",  "")
-    raw_second    = data.get("second_paragraph", "")
-    raw_third     = data.get("third_paragraph",  "")
-    raw_body      = data.get("body",             "")
-    body_is_html  = bool(data.get("body_is_html", False))
+    subject = data.get("subject", "").strip()
+    raw_first = data.get("first_paragraph", "")
+    raw_second = data.get("second_paragraph", "")
+    raw_third = data.get("third_paragraph", "")
+    raw_body = data.get("body", "")
+    body_is_html = bool(data.get("body_is_html", False))
     template_name = data.get("template") or None
 
     # Zeilenumbrüche korrekt in LaTeX übersetzen
-    first_paragraph  = plain_to_latex_lines(raw_first)
+    first_paragraph = plain_to_latex_lines(raw_first)
     second_paragraph = plain_to_latex_lines(raw_second)
-    third_paragraph  = plain_to_latex_lines(raw_third)
-    body             = html_to_latex(raw_body) if body_is_html else plain_to_latex_body(raw_body)
+    third_paragraph = plain_to_latex_lines(raw_third)
+    body = html_to_latex(raw_body) if body_is_html else plain_to_latex_body(raw_body)
 
     try:
         template_path = resolve_template(template_name)
@@ -224,12 +243,12 @@ def api_compile():
 
     try:
         pdf_bytes = compile_pdf(
-            template_file    = template_path,
-            subject          = subject,
-            first_paragraph  = first_paragraph,
-            second_paragraph = second_paragraph,
-            third_paragraph  = third_paragraph,
-            body             = body,
+            template_file=template_path,
+            subject=subject,
+            first_paragraph=first_paragraph,
+            second_paragraph=second_paragraph,
+            third_paragraph=third_paragraph,
+            body=body,
         )
     except RuntimeError as e:
         log.error("Kompilierfehler: %s", e)
@@ -241,7 +260,7 @@ def api_compile():
         mimetype="application/pdf",
         headers={
             "Content-Disposition": f'inline; filename="{safe_name}.pdf"',
-            "Content-Length":      str(len(pdf_bytes)),
+            "Content-Length": str(len(pdf_bytes)),
         },
     )
 
@@ -250,8 +269,8 @@ def api_compile():
 def api_download():
     resp = api_compile()
     if isinstance(resp, Response) and resp.status_code == 200:
-        data      = request.get_json(force=True, silent=True) or {}
-        subject   = data.get("subject", "dokument").strip()
+        data = request.get_json(force=True, silent=True) or {}
+        subject = data.get("subject", "dokument").strip()
         safe_name = sanitize_filename(subject) if subject else "dokument"
         resp.headers["Content-Disposition"] = f'attachment; filename="{safe_name}.pdf"'
     return resp
@@ -410,14 +429,37 @@ html, body {
 #form-top::-webkit-scrollbar { width: 3px; }
 #form-top::-webkit-scrollbar-thumb { background: var(--border); }
 
+/* ── Drag-Teiler zwischen Feldern und Brieftext ──────────────────────────── */
+#body-divider {
+  flex-shrink: 0;
+  height: 6px;
+  background: transparent;
+  cursor: ns-resize;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#body-divider:hover::after, #body-divider.dragging::after {
+  background: var(--copper);
+}
+#body-divider::after {
+  content: '';
+  display: block;
+  width: 32px; height: 2px;
+  background: var(--border);
+  border-radius: 2px;
+  transition: background 0.15s;
+}
+
 /* ── Formular-Tab: Brieftext wächst ─────────────────────────────────────── */
 #body-wrapper {
   flex: 1;
-  min-height: 0;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
   padding: 0 26px;
-  gap: 5px;
+  gap: 0;
 }
 
 #body-wrapper label {
@@ -426,6 +468,39 @@ html, body {
   font-weight: 500;
   color: var(--dust);
   letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+
+/* ── Rich-Text-Toolbar ───────────────────────────────────────────────────── */
+.rich-toolbar {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px;
+  background: #181410;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.rich-toolbar button {
+  background: none;
+  border: none;
+  color: var(--ash);
+  font-family: var(--sans);
+  font-size: 13px;
+  width: 28px; height: 26px;
+  border-radius: 2px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.1s, color 0.1s;
+  line-height: 1;
+  padding: 0;
+}
+.rich-toolbar button:hover { background: #2a2520; color: var(--paper); }
+.rich-toolbar button.active { background: rgba(184,124,76,0.2); color: var(--copper); }
+.rich-toolbar .sep {
+  width: 1px; background: var(--border); margin: 4px 3px; flex-shrink: 0;
 }
 
 #f-body {
@@ -434,18 +509,29 @@ html, body {
   width: 100%;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
   color: var(--paper);
   font-family: var(--sans);
   font-size: 14.5px;
   padding: 10px 12px;
   outline: none;
-  resize: none;
+  overflow-y: auto;
   line-height: 1.6;
   transition: border-color 0.15s, box-shadow 0.15s;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
-#f-body::placeholder { color: #4a4038; font-style: italic; }
+#f-body:empty::before {
+  content: attr(data-placeholder);
+  color: #4a4038;
+  font-style: italic;
+  pointer-events: none;
+}
 #f-body:focus { border-color: var(--copper); box-shadow: 0 0 0 3px rgba(184,124,76,0.12); }
+#f-body b, #f-body strong { font-weight: 700; }
+#f-body i, #f-body em     { font-style: italic; }
+#f-body u                  { text-decoration: underline; }
 
 /* ── Formular-Tab: Aktionen ──────────────────────────────────────────────── */
 #form-actions {
@@ -921,10 +1007,20 @@ html, body {
           <div class="section-label">Inhalt</div>
         </div><!-- /form-top -->
 
-        <!-- Brieftext wächst auf verbleibenden Platz -->
+        <!-- Drag-Teiler: ziehen um Brieftext größer/kleiner zu machen -->
+        <div id="body-divider"></div>
+
+        <!-- Brieftext mit Rich-Text-Toolbar -->
         <div id="body-wrapper">
-          <label for="f-body">Brieftext <span class="pt" style="font-family:var(--mono);font-size:10px;color:var(--ash);font-weight:300">· {{BODY}}</span></label>
-          <textarea id="f-body" placeholder="Haupttext des Briefes…&#10;&#10;Absätze durch eine Leerzeile trennen."></textarea>
+          <label>Brieftext <span class="pt" style="font-family:var(--mono);font-size:10px;color:var(--ash);font-weight:300">· {{BODY}}</span></label>
+          <div class="rich-toolbar">
+            <button id="fmt-bold"      onclick="fmt('bold')"      title="Fett (Strg+B)"><b>B</b></button>
+            <button id="fmt-italic"    onclick="fmt('italic')"    title="Kursiv (Strg+I)"><i>I</i></button>
+            <button id="fmt-underline" onclick="fmt('underline')" title="Unterstrichen (Strg+U)"><u>U</u></button>
+          </div>
+          <div id="f-body"
+               contenteditable="true"
+               data-placeholder="Haupttext des Briefes…&#10;&#10;Absätze durch eine Leerzeile trennen."></div>
         </div>
 
         <div id="form-actions">
@@ -1071,6 +1167,15 @@ function switchTab(name) {
 ══════════════════════════════════════════════════════════════════════════ */
 const DEBOUNCE_MS = 700;
 
+function bodyHtml() {
+  // contenteditable — get inner HTML; treat fully empty div as empty string
+  const el = $('f-body');
+  const html = el.innerHTML;
+  // A single <br> is what browsers leave when you clear a contenteditable
+  if (!html || html === '<br>') return '';
+  return html;
+}
+
 function buildPayload() {
   return {
     template:          fv('f-template') || null,
@@ -1078,8 +1183,8 @@ function buildPayload() {
     first_paragraph:   fv('f-first'),
     second_paragraph:  fv('f-second'),
     third_paragraph:   fv('f-third'),
-    body:              fv('f-body'),
-    body_is_html:      false,
+    body:              bodyHtml(),
+    body_is_html:      true,
   };
 }
 
@@ -1430,7 +1535,7 @@ function loadHistoryEntry(e) {
   $('f-first').value   = e.fields.first  || '';
   $('f-second').value  = e.fields.second || '';
   $('f-third').value   = e.fields.third  || '';
-  $('f-body').value    = e.fields.body   || '';
+  $('f-body').innerHTML = e.fields.body  || '';
 
   if (e.template && e.template !== '—') {
     const opt = [...$('f-template').options].find(o => o.value === e.template);
@@ -1453,11 +1558,64 @@ function clearHistory() {
    Start
 ══════════════════════════════════════════════════════════════════════════ */
 // Alle Formularfelder bei Eingabe → debounced auto-compile
-['f-subject','f-first','f-second','f-third','f-body','f-template'].forEach(id => {
+// Plain inputs / textareas
+['f-subject','f-first','f-second','f-third'].forEach(id => {
   const el = $(id);
   if (el) el.addEventListener('input', onFieldChange);
-  if (el && el.tagName === 'SELECT') el.addEventListener('change', onFieldChange);
 });
+// Template dropdown
+$('f-template').addEventListener('change', onFieldChange);
+// contenteditable body div
+$('f-body').addEventListener('input', onFieldChange);
+
+/* ── Formatting toolbar ───────────────────────────────────────────────────── */
+function fmt(cmd) {
+  $('f-body').focus();
+  document.execCommand(cmd, false, null);
+  updateToolbarState();
+  onFieldChange();
+}
+
+function updateToolbarState() {
+  ['bold','italic','underline'].forEach(cmd => {
+    const btn = $('fmt-' + cmd);
+    if (btn) btn.classList.toggle('active', document.queryCommandState(cmd));
+  });
+}
+
+$('f-body').addEventListener('keyup',   updateToolbarState);
+$('f-body').addEventListener('mouseup', updateToolbarState);
+
+/* ── Drag-Teiler für Brieftext-Größe ─────────────────────────────────────── */
+(function() {
+  const divider = $('body-divider');
+  const formTop = $('form-top');
+  let startY, startH;
+
+  divider.addEventListener('mousedown', e => {
+    startY = e.clientY;
+    startH = formTop.getBoundingClientRect().height;
+    divider.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor     = 'ns-resize';
+  });
+
+  document.addEventListener('mousemove', e => {
+    if (!divider.classList.contains('dragging')) return;
+    const delta  = e.clientY - startY;
+    const newH   = Math.max(80, startH + delta);
+    formTop.style.height    = newH + 'px';
+    formTop.style.flexShrink = '0';
+    formTop.style.overflowY  = 'auto';
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!divider.classList.contains('dragging')) return;
+    divider.classList.remove('dragging');
+    document.body.style.userSelect = '';
+    document.body.style.cursor     = '';
+  });
+})();
 
 loadTemplateList();
 </script>
@@ -1465,9 +1623,11 @@ loadTemplateList();
 </html>
 """
 
+
 @app.get("/")
 def dashboard():
     return Response(DASHBOARD_HTML, mimetype="text/html")
+
 
 # ── Einstiegspunkt ────────────────────────────────────────────────────────────
 
@@ -1476,9 +1636,16 @@ if __name__ == "__main__":
     if templates:
         log.info("Gefundene Vorlagen (%d):", len(templates))
         for t in templates:
-            log.info("  • %s  (%s)%s", t["name"], t["path"], "" if t["writable"] else " [schreibgeschützt]")
+            log.info(
+                "  • %s  (%s)%s",
+                t["name"],
+                t["path"],
+                "" if t["writable"] else " [schreibgeschützt]",
+            )
     else:
-        log.warning("Keine Vorlagen gefunden! LATEX_TEMPLATE_DIR oder LATEX_TEMPLATE_FILE setzen.")
+        log.warning(
+            "Keine Vorlagen gefunden! LATEX_TEMPLATE_DIR oder LATEX_TEMPLATE_FILE setzen."
+        )
 
     log.info("Starte Web-Dashboard auf http://%s:%d", WEB_HOST, WEB_PORT)
     app.run(host=WEB_HOST, port=WEB_PORT, debug=WEB_DEBUG)
