@@ -746,9 +746,31 @@ html, body {
   overflow: hidden;
 }
 
+/* Thin compile-progress bar at top */
+#compile-bar {
+  flex-shrink: 0;
+  height: 2px;
+  background: transparent;
+  position: relative;
+  overflow: hidden;
+}
+#compile-bar.active::after {
+  content: '';
+  position: absolute;
+  left: -40%;
+  top: 0; bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--copper), transparent);
+  animation: bar-sweep 1.1s ease-in-out infinite;
+}
+@keyframes bar-sweep {
+  0%   { left: -40%; }
+  100% { left: 100%;  }
+}
+
 #preview-toolbar {
   flex-shrink: 0;
-  height: 48px;
+  height: 46px;
   background: #191512;
   border-bottom: 1px solid #2a2520;
   display: flex;
@@ -764,19 +786,6 @@ html, body {
   color: var(--ash);
   flex: 1;
 }
-
-#preview-mode-badge {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 3px 9px;
-  border-radius: 99px;
-  background: rgba(184,124,76,0.1);
-  color: var(--copper);
-  border: 1px solid rgba(184,124,76,0.25);
-}
-#preview-mode-badge.pdf { background: rgba(80,160,80,0.1); color: #6dbb6d; border-color: rgba(80,160,80,0.25); }
 
 #status-pill {
   font-family: var(--mono);
@@ -794,32 +803,33 @@ html, body {
 
 #preview-area { flex: 1; overflow: hidden; position: relative; }
 
-#preview-frame, #pdf-frame {
+#pdf-frame {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   border: none;
+  background: #525659;
+  display: none;
 }
-#pdf-frame { display: none; background: #525659; }
 
-#spinner-overlay {
+#empty-hint {
   position: absolute;
   inset: 0;
-  background: rgba(15,14,12,0.7);
-  display: none;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  z-index: 10;
+  gap: 14px;
+  pointer-events: none;
 }
-.spinner {
-  width: 32px; height: 32px;
-  border: 2px solid #3a342e;
-  border-top-color: var(--copper);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+#empty-hint span {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ash);
+  opacity: 0.4;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Fehler-Toast ────────────────────────────────────────────────────────── */
 #error-toast {
@@ -890,22 +900,22 @@ html, body {
           <div class="section-label">Dokument</div>
           <div class="field">
             <label for="f-subject">Betreff <span class="pt">· {{SUBJECT}}</span></label>
-            <input id="f-subject" type="text" placeholder="z. B. Kündigung Mietvertrag" oninput="onFieldChange()"/>
+            <input id="f-subject" type="text" placeholder="z. B. Kündigung Mietvertrag"/>
           </div>
 
           <div class="section-label">Abschnitte</div>
           <div class="field">
             <label for="f-first">Empfänger <span class="pt">· {{FIRST_PARAGRAPH}}</span></label>
-            <textarea id="f-first" rows="3" placeholder="Kal Meier&#10;Winkelstraße 3&#10;12345 Musterstadt" oninput="onFieldChange()"></textarea>
+            <textarea id="f-first" rows="3" placeholder="Kal Meier&#10;Winkelstraße 3&#10;12345 Musterstadt"></textarea>
             <div class="field-hint">Eine Adresszeile pro Textzeile</div>
           </div>
           <div class="field">
             <label for="f-second">Datum <span class="pt">· {{SECOND_PARAGRAPH}}</span></label>
-            <textarea id="f-second" rows="2" placeholder="Köln, 28. April 2026" oninput="onFieldChange()"></textarea>
+            <textarea id="f-second" rows="2" placeholder="Köln, 28. April 2026"></textarea>
           </div>
           <div class="field">
             <label for="f-third">Anrede <span class="pt">· {{THIRD_PARAGRAPH}}</span></label>
-            <textarea id="f-third" rows="2" placeholder="Sehr geehrte Damen und Herren," oninput="onFieldChange()"></textarea>
+            <textarea id="f-third" rows="2" placeholder="Sehr geehrte Damen und Herren,"></textarea>
           </div>
 
           <div class="section-label">Inhalt</div>
@@ -914,15 +924,15 @@ html, body {
         <!-- Brieftext wächst auf verbleibenden Platz -->
         <div id="body-wrapper">
           <label for="f-body">Brieftext <span class="pt" style="font-family:var(--mono);font-size:10px;color:var(--ash);font-weight:300">· {{BODY}}</span></label>
-          <textarea id="f-body" placeholder="Haupttext des Briefes…&#10;&#10;Absätze durch eine Leerzeile trennen." oninput="onFieldChange()"></textarea>
+          <textarea id="f-body" placeholder="Haupttext des Briefes…&#10;&#10;Absätze durch eine Leerzeile trennen."></textarea>
         </div>
 
         <div id="form-actions">
-          <button class="btn btn-primary" id="btn-pdf" onclick="compilePdf(false)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            PDF-Vorschau
+          <button class="btn btn-ghost" id="btn-save" onclick="saveToHistory()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Speichern
           </button>
-          <button class="btn btn-ghost" id="btn-dl" onclick="compilePdf(true)">
+          <button class="btn btn-primary" id="btn-dl" onclick="downloadPdf()">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             Herunterladen
           </button>
@@ -983,17 +993,17 @@ html, body {
 
   <!-- ══ Vorschau ══════════════════════════════════════════════════════════ -->
   <main id="preview-pane">
+    <div id="compile-bar"></div>
     <div id="preview-toolbar">
-      <span class="toolbar-title">Vorschau</span>
-      <span id="preview-mode-badge">Sofortvorschau</span>
+      <span class="toolbar-title">PDF-Vorschau</span>
       <span id="status-pill">bereit</span>
     </div>
     <div id="preview-area">
-      <!-- Sofortvorschau (HTML-Brief) -->
-      <iframe id="preview-frame" title="Sofortvorschau" src="about:blank"></iframe>
-      <!-- Echtes PDF (nach Kompilierung) -->
-      <iframe id="pdf-frame"     title="PDF-Vorschau"></iframe>
-      <div id="spinner-overlay"><div class="spinner"></div></div>
+      <iframe id="pdf-frame" title="PDF-Vorschau"></iframe>
+      <div id="empty-hint">
+        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".15"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        <span>PDF erscheint hier automatisch</span>
+      </div>
     </div>
   </main>
 
@@ -1007,14 +1017,12 @@ html, body {
    Zustand
 ══════════════════════════════════════════════════════════════════════════ */
 const S = {
-  activeTab:       'formular',
-  previewMode:     'instant',   // 'instant' | 'pdf'
-  isCompiling:     false,
-  instantTimer:    null,
-  currentPdfUrl:   null,
-  currentInstUrl:  null,
-  templateWritable: true,
-  templateList:    [],
+  activeTab:      'formular',
+  isCompiling:    false,
+  lastCompiled:   null,   // JSON snapshot of the payload that started the last compile
+  debounceTimer:  null,
+  currentPdfUrl:  null,
+  templateList:   [],
 };
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1059,102 +1067,10 @@ function switchTab(name) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   Sofortvorschau (HTML-Brief, kein pdflatex)
+   Automatische PDF-Kompilierung bei Tastendruck
 ══════════════════════════════════════════════════════════════════════════ */
-function generateLetterHtml() {
-  const subject  = fv('f-subject');
-  const first    = fv('f-first');
-  const second   = fv('f-second');
-  const third    = fv('f-third');
-  const body     = fv('f-body');
+const DEBOUNCE_MS = 700;
 
-  const ph = s => s ? escHtml(s) : '';
-
-  return `<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="UTF-8">
-<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
-<style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{background:#606060;min-height:100%;font-family:'Lora','Times New Roman',serif}
-body{display:flex;justify-content:center;align-items:flex-start;padding:28px 20px;min-height:100vh}
-.page{
-  background:#fff;width:100%;max-width:740px;
-  min-height:calc(740px * 1.414);
-  padding:64px 72px 80px;
-  box-shadow:0 6px 40px rgba(0,0,0,.55);
-  font-size:11.5pt;line-height:1.55;color:#111;
-  position:relative;
-}
-.addr-window{margin-bottom:36px}
-.return-addr{
-  font-family:sans-serif;font-size:7.5pt;color:#aaa;
-  border-bottom:.5px solid #ddd;padding-bottom:5px;margin-bottom:9px;
-  letter-spacing:.04em;
-}
-.recipient{font-size:11pt;white-space:pre-line;min-height:5em;line-height:1.6}
-.date-block{text-align:right;margin-bottom:28px;white-space:pre-line;font-size:11pt}
-.subject-line{font-weight:700;font-size:11.5pt;margin-bottom:18px}
-.salutation{margin-bottom:18px;white-space:pre-line}
-.body-text{white-space:pre-wrap;text-align:justify;line-height:1.65}
-.hint{color:#ccc;font-style:italic;font-size:9pt;font-family:sans-serif}
-.stamp{
-  position:absolute;bottom:20px;right:24px;
-  font-family:sans-serif;font-size:7.5pt;color:#ddd;font-style:italic;
-}
-</style>
-</head>
-<body>
-<div class="page">
-  <div class="addr-window">
-    <div class="return-addr">Sofortvorschau · LaTeX PDF Studio</div>
-    <div class="recipient">${ph(first) || '<span class="hint">Empfänger…</span>'}</div>
-  </div>
-  <div class="date-block">${ph(second) || '<span class="hint">Datum…</span>'}</div>
-  <div class="subject-line">${ph(subject) || '<span class="hint">Betreff…</span>'}</div>
-  <div class="salutation">${ph(third) || '<span class="hint">Anrede…</span>'}</div>
-  <div class="body-text">${ph(body) || '<span class="hint">Brieftext…</span>'}</div>
-  <div class="stamp">Sofortvorschau · kein echtes PDF</div>
-</div>
-</body></html>`;
-}
-
-function renderInstantPreview() {
-  const html = generateLetterHtml();
-  const blob = new Blob([html], {type:'text/html'});
-
-  if (S.currentInstUrl) URL.revokeObjectURL(S.currentInstUrl);
-  S.currentInstUrl = URL.createObjectURL(blob);
-
-  $('preview-frame').src = S.currentInstUrl;
-
-  // Falls gerade PDF angezeigt → nichts überschreiben
-  if (S.previewMode === 'instant') {
-    $('preview-frame').style.display = 'block';
-    $('pdf-frame').style.display     = 'none';
-    $('preview-mode-badge').textContent = 'Sofortvorschau';
-    $('preview-mode-badge').classList.remove('pdf');
-    setStatus('', 'bereit');
-  }
-}
-
-function onFieldChange() {
-  // Wenn gerade PDF angezeigt → zurück zur Sofortvorschau
-  if (S.previewMode === 'pdf') {
-    S.previewMode = 'instant';
-    $('pdf-frame').style.display     = 'none';
-    $('preview-frame').style.display = 'block';
-    $('preview-mode-badge').textContent = 'Sofortvorschau';
-    $('preview-mode-badge').classList.remove('pdf');
-  }
-  clearTimeout(S.instantTimer);
-  S.instantTimer = setTimeout(renderInstantPreview, 120);
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   Echte PDF-Kompilierung
-══════════════════════════════════════════════════════════════════════════ */
 function buildPayload() {
   return {
     template:          fv('f-template') || null,
@@ -1167,23 +1083,32 @@ function buildPayload() {
   };
 }
 
-async function compilePdf(forDownload = false) {
+function onFieldChange() {
+  clearTimeout(S.debounceTimer);
+  if (S.isCompiling) return;   // Compile läuft → nach Abschluss selbst prüfen
+  S.debounceTimer = setTimeout(runAutoCompile, DEBOUNCE_MS);
+}
+
+async function runAutoCompile() {
   if (S.isCompiling) return;
-  S.isCompiling = true;
 
+  const payload     = buildPayload();
+  const payloadJson = JSON.stringify(payload);
+
+  // Nichts kompilieren wenn sich seit dem letzten Compile nichts geändert hat
+  if (payloadJson === S.lastCompiled) return;
+
+  S.isCompiling   = true;
+  S.lastCompiled  = payloadJson;   // Snapshot des *gestarteten* Compiles merken
+
+  $('compile-bar').classList.add('active');
   setStatus('compiling', 'kompiliert…');
-  $('spinner-overlay').style.display = 'flex';
-  $('btn-pdf').disabled = true;
-  $('btn-dl').disabled  = true;
-
-  const endpoint = forDownload ? '/api/download' : '/api/compile';
-  const payload  = buildPayload();
 
   try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
+    const res = await fetch('/api/compile', {
+      method:  'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(payload),
+      body:    payloadJson,
     });
 
     if (!res.ok) {
@@ -1193,36 +1118,78 @@ async function compilePdf(forDownload = false) {
     }
 
     const blob = await res.blob();
+    showPdfBlob(blob);
+    setStatus('ready', 'fertig ✓');
 
-    if (forDownload) {
-      const safe = (fv('f-subject') || 'dokument').replace(/[^a-zA-Z0-9_\-]/g,'_').slice(0,50);
-      const url  = URL.createObjectURL(blob);
-      const a    = Object.assign(document.createElement('a'), {href:url, download: safe+'.pdf'});
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 15000);
-      setStatus('ready', 'heruntergeladen ✓');
-      addToHistory(payload);
-    } else {
-      if (S.currentPdfUrl) URL.revokeObjectURL(S.currentPdfUrl);
-      S.currentPdfUrl = URL.createObjectURL(blob);
-      S.previewMode   = 'pdf';
-      $('pdf-frame').src            = S.currentPdfUrl;
-      $('pdf-frame').style.display  = 'block';
-      $('preview-frame').style.display = 'none';
-      $('preview-mode-badge').textContent = 'PDF ✓';
-      $('preview-mode-badge').classList.add('pdf');
-      setStatus('ready', 'fertig ✓');
-      addToHistory(payload);
-    }
   } catch(e) {
     setStatus('error', 'Fehler');
     showError('Kompilierfehler:\n' + e.message);
   } finally {
-    $('spinner-overlay').style.display = 'none';
+    $('compile-bar').classList.remove('active');
     S.isCompiling = false;
-    $('btn-pdf').disabled = false;
-    $('btn-dl').disabled  = false;
+
+    // Hat sich der Formularstand seit Compile-Start geändert?
+    // Wenn ja → genau einen weiteren Compile für die aktuelle Version
+    if (JSON.stringify(buildPayload()) !== S.lastCompiled) {
+      runAutoCompile();
+    }
   }
+}
+
+function showPdfBlob(blob) {
+  if (S.currentPdfUrl) URL.revokeObjectURL(S.currentPdfUrl);
+  S.currentPdfUrl = URL.createObjectURL(blob);
+  const frame = $('pdf-frame');
+  frame.src            = S.currentPdfUrl;
+  frame.style.display  = 'block';
+  $('empty-hint').style.display = 'none';
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Herunterladen  (kein History-Eintrag)
+══════════════════════════════════════════════════════════════════════════ */
+async function downloadPdf() {
+  const payload = buildPayload();
+  $('btn-dl').disabled = true;
+  setStatus('compiling', 'lädt…');
+  try {
+    const res = await fetch('/api/download', {
+      method:  'POST',
+      headers: {'Content-Type':'application/json'},
+      body:    JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch(_) {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const safe = (fv('f-subject') || 'dokument').replace(/[^a-zA-Z0-9_\-]/g,'_').slice(0,50);
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), {href:url, download: safe+'.pdf'});
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 15000);
+    setStatus('ready', 'heruntergeladen ✓');
+  } catch(e) {
+    setStatus('error', 'Fehler');
+    showError('Download-Fehler:\n' + e.message);
+  } finally {
+    $('btn-dl').disabled = false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Speichern → History-Eintrag
+══════════════════════════════════════════════════════════════════════════ */
+function saveToHistory() {
+  const payload = buildPayload();
+  addToHistory(payload);
+  // Kurzes visuelles Feedback am Button
+  const btn = $('btn-save');
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg> Gespeichert';
+  btn.disabled  = true;
+  setTimeout(() => { btn.innerHTML = orig; btn.disabled = false; }, 1800);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1465,14 +1432,15 @@ function loadHistoryEntry(e) {
   $('f-third').value   = e.fields.third  || '';
   $('f-body').value    = e.fields.body   || '';
 
-  // Vorlage setzen falls vorhanden
   if (e.template && e.template !== '—') {
     const opt = [...$('f-template').options].find(o => o.value === e.template);
     if (opt) $('f-template').value = e.template;
   }
 
   switchTab('formular');
-  renderInstantPreview();
+  // Sofort kompilieren nach dem Laden
+  clearTimeout(S.debounceTimer);
+  runAutoCompile();
 }
 
 function clearHistory() {
@@ -1484,8 +1452,14 @@ function clearHistory() {
 /* ══════════════════════════════════════════════════════════════════════════
    Start
 ══════════════════════════════════════════════════════════════════════════ */
+// Alle Formularfelder bei Eingabe → debounced auto-compile
+['f-subject','f-first','f-second','f-third','f-body','f-template'].forEach(id => {
+  const el = $(id);
+  if (el) el.addEventListener('input', onFieldChange);
+  if (el && el.tagName === 'SELECT') el.addEventListener('change', onFieldChange);
+});
+
 loadTemplateList();
-renderInstantPreview();
 </script>
 </body>
 </html>
