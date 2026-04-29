@@ -3,6 +3,8 @@ services:
         image: ghcr.io/YOUR_GITHUB_USERNAME/latex-email-daemon:latest
         container_name: latex-email-daemon
         restart: unless-stopped
+        # Runs on the default internal bridge only — it talks outbound to
+        # IMAP/SMTP over the host's normal network stack, no LAN IP needed.
         environment:
             - IMAP_SERVER=${IMAP_SERVER}
             - EMAIL_ACCOUNT=${EMAIL_ACCOUNT}
@@ -27,19 +29,52 @@ services:
         restart: unless-stopped
         command: ["python", "web.py"]
         environment:
-            # Template discovery — same volume as the daemon
             - LATEX_TEMPLATE_DIR=templates
             - LATEX_TEMPLATE_FILE=templates/template.tex
-            # Web server config
             - WEB_HOST=0.0.0.0
             - WEB_PORT=5000
             - WEB_DEBUG=${WEB_DEBUG:-0}
-        ports:
-            - "${WEB_PORT:-5000}:5000"
         volumes:
-            # Shares the same template volume as the daemon so both see the
-            # same .tex files without any duplication.
             - template-data:/app/src/latex_email_daemon/templates
+        # No ports: block — http://pdf/ via pdf-alias is the intended entry point.
+        # If you still want direct access, uncomment:
+        # ports:
+        #     - "5000:5000"
+
+    # Lightweight nginx that gets its own LAN IP via macvlan and announces
+    # hostname "pdf" to Fritzbox via DHCP — making http://pdf/ resolve on
+    # every device on the network without any DNS config.
+    # Proxies all traffic to latex-pdf-web:5000 over the internal bridge.
+    pdf-alias:
+        image: nginx:alpine
+        container_name: pdf-alias
+        hostname: pdf
+        restart: unless-stopped
+        depends_on:
+            - latex-pdf-web
+        volumes:
+            - ./pdf-alias.conf:/etc/nginx/conf.d/default.conf:ro
+        networks:
+            default: {}   # internal bridge — reaches latex-pdf-web by service name
+            lan:
+                ipv4_address: ${PDF_LAN_IP}
+
+networks:
+    default: {}
+
+    lan:
+        driver: macvlan
+        driver_opts:
+            # Your LAN-facing interface on vDocker.
+            # Find it with: ip -br link show   (the one with your LAN IP, e.g. eth0, ens18)
+            parent: ${LAN_INTERFACE}
+        ipam:
+            config:
+                # Find subnet + gateway with: ip route show default
+                # Example output: default via 192.168.178.1 dev eth0
+                #   → gateway is 192.168.178.1, subnet is 192.168.178.0/24
+                - subnet: ${LAN_SUBNET}
+                  gateway: ${LAN_GATEWAY}
 
 volumes:
     daemon-data:
